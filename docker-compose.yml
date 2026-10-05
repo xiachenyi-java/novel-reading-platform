@@ -1,0 +1,51 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: demo2-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: book_db
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  redis:
+    image: redis:7-alpine
+    container_name: demo2-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  app:
+    build: .
+    container_name: demo2-app
+    ports:
+      - "8081:80"
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - JWT_SECRET=your-256-bit-secret-key-for-jwt-signing-must-be-long
+      - "DB_URL=jdbc:mysql://mysql:3306/book_db?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true"
+      - DB_PASSWORD=123456
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
+      # 如果 Redis 有密码，再打开下面这行
+      # - SPRING_DATA_REDIS_PASSWORD=yourpassword
+      # 如果使用非 0 号库，再打开下面这行
+      # - SPRING_DATA_REDIS_DATABASE=0
+    depends_on:
+      mysql:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+volumes:
+  mysql_data:
+  redis_data:
