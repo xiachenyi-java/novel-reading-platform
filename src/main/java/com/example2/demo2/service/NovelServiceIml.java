@@ -15,7 +15,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -208,8 +207,18 @@ public class NovelServiceIml implements INovelService {
         Cache novelCache = cacheManager.getCache("novel");
         Cache nullCache = cacheManager.getCache("novel-null");
 
-        Object nullMark = nullCache.get(novelId);
-        NovelDetailVO cached = novelCache.get(novelId, NovelDetailVO.class);
+        Object nullMark = null;
+        try {
+            nullMark = nullCache.get(novelId);
+        } catch (Exception e) {
+            log.warn("空标记读取失败，降级。novelId={}, err={}", novelId, e.getMessage());
+        }
+        NovelDetailVO cached = null;
+        try {
+            cached = novelCache.get(novelId, NovelDetailVO.class);
+        } catch (Exception e) {
+            log.warn("详情缓存读取失败，降级。novelId={}, err={}", novelId, e.getMessage());
+        }
 
         // 命中空值缓存：之前查过，确认不存在
         if (nullMark != null) {
@@ -223,7 +232,11 @@ public class NovelServiceIml implements INovelService {
         Optional<Novel> opt = novelRepository.findById(novelId);
         // 数据库也没有：写入空值缓存后抛异常
         if (opt.isEmpty()) {
-            nullCache.put(novelId, Boolean.TRUE);
+            try {
+                nullCache.put(novelId, Boolean.TRUE);
+            } catch (Exception e) {
+                log.warn("空标记写入失败，忽略。novelId={}, err={}", novelId, e.getMessage());
+            }
             throw new BusinessException("小说不存在");
         }
 
@@ -253,7 +266,11 @@ public class NovelServiceIml implements INovelService {
         }).toList();
 
         vo.setChapters(outlines);
-        novelCache.put(novelId, vo);
+        try {
+            novelCache.put(novelId, vo);
+        } catch (Exception e) {
+            log.warn("详情缓存写入失败，忽略。novelId={}, err={}", novelId, e.getMessage());
+        }
         return vo;
     }
 

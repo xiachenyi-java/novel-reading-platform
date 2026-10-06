@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
+import org.springframework.data.redis.cache.RedisCacheWriter;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.serializer.RedisSerializer;
@@ -16,6 +17,7 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * 夏辰义
@@ -31,7 +33,10 @@ public class CacheConfig implements CachingConfigurer {
     public RedisCacheManager cacheManager(RedisConnectionFactory connectionFactory) {
         RedisCacheConfiguration config = RedisCacheConfiguration.defaultCacheConfig()
                 // 默认有效期 30 分钟
-                .entryTtl(Duration.ofMinutes(30))
+                .entryTtl((key,value) -> {
+                    int seconds = ThreadLocalRandom.current().nextInt(1500,2101);
+                    return Duration.ofSeconds(seconds);
+                })
                 // Key 用字符串序列化，在 Redis 里可读
                 .serializeKeysWith(
                         RedisSerializationContext.SerializationPair
