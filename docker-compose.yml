@@ -9,6 +9,8 @@ services:
       - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+      # 首次启动（数据目录为空时）自动执行建表脚本，只需一次
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
 
   redis:
     image: redis:7-alpine

@@ -577,19 +577,28 @@
     cd novel-frontend
     npm install
     npm run dev                     # 默认 5173，Vite 代理 /api → localhost:8080
+    # ★ 代理 target 已改成从环境变量读（2026-10-07）：
+    #     VITE_API_TARGET=http://localhost:8081 npm run dev   # 连 Docker 里的后端
+    #   不设就走默认 8080（对应 IDEA 里跑的 dev 后端）。
+    #   ★ 这条 proxy 只在 dev 生效；生产的 dist/ 由 Nginx 反代 /api。
 
   【打包】
     ./mvnw clean package
     # ★ 测试已修好（12 个用例连跑两遍全绿），不再需要 -Dmaven.test.skip=true
 
   【Docker】
-    docker compose up --build
+    docker compose down -v && docker compose up --build
     # app 映射 8081:80（prod profile 里 server.port=80）
+    # ★ 建表由 docker/mysql/init/01-schema.sql 提供（挂到
+    #   mysql 的 /docker-entrypoint-initdb.d）。
+    #   ★ 该脚本**只在数据目录为空时执行一次** ——
+    #     改了 schema 必须 `down -v` 重建，否则脚本不跑。
     # 注意：mysql 没有 healthcheck，app 可能因数据库未就绪而启动失败，
     #       需要手动 docker compose restart app
     # ★ 注：Dockerfile 两处已改为 JDK 25（2026-10-06 核对代码），
-    #     原"镜像根本构建不出来"的判断已过期。
-    #     ★ 但仍欠一次 docker compose up --build 实测，别当成已解决。
+    #     ✅ 镜像构建已实测通过（2026-10-07）。
+    # ★ 2026-10-07 实测：容器 3 个全 Up，/novels 返回 body code=200，
+    #     novel 表 3 个索引齐全（PRIMARY + 两个 idx_）。
 
   【验证接口可用】
     curl "http://localhost:8080/novels?page=1&size=3"        # 不需要登录
@@ -634,10 +643,10 @@
 
   【🔴 上线前必须解决】
 
-  ✅ 暂无阻塞项 —— 原 17 号已修（见下）。
-     ★ 但 17 号还欠一次实测，别当成已完成。
+  ✅ 暂无阻塞项 —— 原 17 号已修并**实测通过**（2026-10-07，见下）。
+     实测中暴露的 18 号已于当天解决（见下）。
 
-  17. ✅【代码已修 · ★ 待实测】Dockerfile 的 JDK 版本与 pom 不匹配
+  17. ✅【已实测通过（2026-10-07）】Dockerfile 的 JDK 版本与 pom 不匹配
 
       ── 原问题（2026-10-05 发现）──
       Dockerfile 第 2 行 / 第 9 行用的是 JDK / JRE **23**：
@@ -652,15 +661,72 @@
         Dockerfile:2   FROM maven:3.9-eclipse-temurin-25-alpine AS builder
         Dockerfile:9   FROM eclipse-temurin:25-jre-alpine
 
-      ── ★★ 但是：还没实测 ──
-      按本项目验证文化，**没跑过就不能标"已解决"**。
-      下次动 Docker 前补一次：docker compose up --build
-      （这个坑编译器和 IDE 都发现不了，只能靠真跑 —— 和问题 1 同一类）
+      ── ✅ 实测结果（2026-10-07）──
+      `docker compose down -v && docker compose up --build`
+      镜像**构建成功** —— "release version 25 not supported" 那个错没有出现，
+      JDK 25 那两处改动是对的。
+
+      ★ 但**首次实测暴露了一个新问题**（见下方 18 号）：
+        应用起不来，报 Schema validation: missing table [chapter]。
+        ⇒ 17 号本身结了，但它挡在后面的那个问题才是真麻烦。
 
       ── 背景（值得记住）──
       升级 Java 25 时只改了 pom，忘了 Dockerfile。
       ★ 教训：**版本号散落在多个文件里，改一处必须全库搜一遍**：
         grep -rn "temurin\|java.version\|release>" Dockerfile pom.xml
+
+  18. ✅【2026-10-07 实测发现 · 当天已解决】Docker 里的 prod 撞上空库
+
+      ── 现象 ──
+      demo2-app 启动即 Exited(1)：
+        SchemaManagementException: Schema validation: missing table [chapter]
+      ★ 注意：报的是 chapter，但它只是**第一个被检查到的** ——
+        三张表其实都缺。
+
+      ── 根因：三件事叠加，缺一不发生 ──
+        ① compose 里 SPRING_PROFILES_ACTIVE=prod
+        ② prod 的 ddl-auto=validate  → **只校验、绝不建表**（设计正确）
+        ③ compose 的 MYSQL_DATABASE   → **只建库、绝不建表**
+      ＋ 项目里**没有任何 .sql 文件**（find 过）
+      ⇒ 开发库的表是 dev 的 update 模式**悄悄长出来的**，
+        只存在于本机硬盘上。**validate 在向一份不存在的合同对账。**
+      ⇒ 只要 volume 为空（新机器 / 删过 volume），**100% 复现**，不是偶发。
+
+      ── ✅ 修法（方案 A：MySQL 官方 initdb 机制）──
+        ① mysqldump -uroot -p****** --no-data --databases book_db \
+             > docker/mysql/init/01-schema.sql
+        ② docker-compose.yml 的 mysql 加挂载：
+             - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+        ③ docker compose down -v && docker compose up --build
+
+      ── ★★ 两个必须记住的坑 ──
+        · init 脚本**只在数据目录为空时执行一次**。
+          不 `down -v` 就 up，脚本根本不会跑，你会得到**一模一样的报错**。
+        · 导出的 schema **必须验索引在不在**：
+            SHOW INDEX FROM book_db.novel;
+          应看到 3 行（PRIMARY + idx_novel_last_update_time
+          + idx_novel_category_last_update_time）。
+          漏了的话，"索引优化有实测数据"这条简历优势在线上等于零。
+
+      ── ★ 深层认知（面试可讲）──
+        **@Table(indexes=...)（决策 6）在 prod 的 validate 模式下
+        不产生任何 DDL。** 它在 dev 的 update 下会自动建索引，
+        但 prod 只校验不创建 —— 索引必须由 schema.sql / 迁移脚本显式创建。
+        ⇒ "索引定义跟代码走"这句话**只在 dev 成立**。
+
+      ── 已实测（2026-10-07）──
+        容器 3 个全 Up；GET /novels → body code=200；
+        chapter / novel / user 三张表齐全；novel 的 3 个索引齐全。
+        ★ 注意 content 为空数组 —— 导出用的是 --no-data，只带结构不带数据。
+
+      ── 遗留待办 ──
+        · mysql 仍无 healthcheck（七·二 B1 待办）——
+          init 脚本会让 MySQL 首次启动多花 20-40 秒，
+          depends_on 只等 service_started ⇒ 更容易撞上"没就绪"
+        · 没有 .dockerignore：构建上下文 129M，其中 126M(98%) 是
+          novel-frontend/node_modules —— Dockerfile 一个字节都没用到
+        · 没有 schema 版本管理（Flyway/Liquibase）—— 第三梯队
+        · 前端不在 compose 里（见 七·二 B1：Nginx 托管 dist/）
 
   【🟠 安全隐患（部署到公网前必须改）】
 
