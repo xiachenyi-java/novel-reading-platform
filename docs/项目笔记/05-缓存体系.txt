@@ -1,0 +1,422 @@
+================================================================================
+【项目笔记 · 05】缓存体系
+================================================================================
+  对应知识笔记：docs/知识笔记/05-缓存体系.txt
+  相关代码：config/CacheConfig.java、service/NovelServiceIml.java、
+            service/UserService.java、config/LoginInterceptor.java
+
+
+################################################################################
+  一、现状盘点
+################################################################################
+
+【完成度】主体 6/6 完成；进阶项：穿透 ✓、降级 ✓、雪崩 ✓、击穿 ✓
+          → 10/14 = 71%   ★ 判据 A 的 05 大类已过 70% 线（2026-10-07）
+  2026-10-06 更新：★★ 降级已修复（超时配置 + 4 处 try-catch）；
+                  雪崩已做（TtlFunction 随机抖动）
+  2026-10-07 更新：击穿已做（本地互斥锁）——
+                  ★ 但仍是**单机锁**，且 locks Map 只增不减（见 P2 节）
+
+  ------------------------------------------------------------------
+  步骤   内容                          状态    代码位置
+  ------------------------------------------------------------------
+  01     跑起来 Redis                  ✓      容器 demo2-redis，端口 6379
+  02     Spring Boot 连接 Redis        ✓      application-dev.properties
+  03     Token 黑名单（登出生效）      ✓      UserController.logout
+  04     缓存当前登录用户信息          ✓      UserService.getCurrentUser()
+  05     小说详情缓存                  ✓      NovelServiceIml.findDetail
+                                                ★ 已从 @Cacheable 改为
+                                                  手动 cacheManager 调用
+  06     配置 JSON 序列化              ✓      CacheConfig
+  ---- 进阶 ----
+  ★ 穿透（空值缓存）                     ✓      novel-null 区，TTL 5 分钟
+  ★ 降级                                ✓      ★★ 2026-10-06 已修复：
+                                                超时配置 + 4 处 try-catch
+  击穿（互斥锁）                         ✓      本地互斥锁 ★ 单机，多实例失效
+  雪崩（TTL 随机抖动）                   ✓      TtlFunction，1500~2100 秒
+  缓存与数据库一致性                     □
+  分布式锁                              □
+  持久化 RDB/AOF                        □
+  大 key / 热 key 排查                  □
+  ------------------------------------------------------------------
+
+【已使用的 Redis 场景】
+
+  ------------------------------------------------------------------
+  场景              Key                          类型    状态
+  ------------------------------------------------------------------
+  RefreshToken 存储 refresh_token:{uuid}          String  ✓ 在用
+  登出黑名单        blacklist:user:{userId}       Hash    ✓ 在用
+  用户信息缓存      user:info:{userId}            String  ✓ 在用（但无调用方）
+  限流计数          rate_limit:{key}:{ip}         String  ✓ 在用
+  排行榜总榜        ranking:novel:total           ZSET    ✓ 在用
+  排行榜日榜        ranking:novel:day:{date}      ZSET    ✓ 在用（读 + 写）
+  ------------------------------------------------------------------
+
+【技术亮点（面试可以主动讲）】
+
+  ✓ 黑名单数据结构选型：从 Set 改成 Hash
+      Set 方案：blacklist:jti → Set{jti1, jti2, ...}
+                问题：没存过期时间，不知道何时能清理
+      Hash 方案：blacklist:user:{userId} → Hash{token: 过期时间戳}
+                优点：一个结构存两样、按用户分组、支持惰性清理
+  ✓ 惰性清理：读到过期的 field 就删掉，避免内存无限增长
+  ✓ 用户信息缓存三态处理：命中 / 未命中 / 反序列化失败
+  ✓ 反序列化失败时删掉脏缓存降级查库 —— 这是"缓存降级"的实践
+  ✓ 用 UUID 做 refreshToken 而不是 JWT，避免被解析
+
+【★ 2026-10-05 变更：findDetail 已改为手动调用】
+
+  现状：
+    · NovelServiceIml.findDetail()  → ★ 不再用 @Cacheable，
+      改成手动 cacheManager.getCache("novel").get(...) / .put(...)
+      （原因：要做空值缓存防穿透，见"缺口 6"和决策 10）
+    · 全项目现在有 6 个 @CacheEvict、0 个 @Cacheable：
+        addNovel       → @CacheEvict(value="novel-null", key="#result.id")
+        addChapter     → @CacheEvict(value="novel",      key="#novelId")
+        updateChapter  → @CacheEvict(value="novel",      key="#novelId")
+        deleteChapter  → @CacheEvict(value="novel",      key="#novelId")
+        deleteNovel    → @CacheEvict(value="novel",      key="#id")
+        updateNovel    → @CacheEvict(value="novel",      key="#id")
+    ★ 六个注解的 key 全部核对正确
+
+  【✅ 副作用已修复：缓存降级】曾被打掉，2026-10-06 已补回，见下方缺口 6。
+
+  【★ 踩过的坑：@CacheEvict 的 key 写成了 #id】
+    deleteChapter(Integer novelId, Integer chapterId) 里
+    一开始写的是 key = "#id" —— 但这个方法**没有叫 id 的参数**。
+    SpEL 解析不到 → 缓存 key 算出来是空 →
+    evict 的是一个不存在的 key，真正的 novel::1 纹丝不动。
+
+    后果：删了章节，详情页的章节目录还是旧的（最长 30 分钟）。
+
+    修法：改成 key = "#novelId"。
+    ★ 注意 deleteNovel(Integer id) 的参数名**确实叫 id**，
+      所以那里用 #id 是对的 —— 两个方法别搞混。
+
+  【★ 万能自查法】
+    写完 key = "#xxx"，回头看方法签名里有没有这个参数名。
+    名字对不上，就一定是 bug。
+
+【★ 缺口 2：passwordHash 被写进 Redis 缓存】
+
+  位置：UserService.getCurrentUser()
+    User dbUser = userRepository.findById(...).orElseThrow(...);
+    String json = objectMapper.writeValueAsString(dbUser);   // ← 带 passwordHash
+    stringRedisTemplate.opsForValue().set(key, json, 30, TimeUnit.MINUTES);
+
+  后果：
+    · Redis 里存着 BCrypt 哈希（不可逆，但不必要）
+    · 缓存命中时返回的 User 对象也带 passwordHash
+
+【★ 缺口 3：用户信息变更后缓存不失效】
+
+  现状：user:info:{userId} 缓存 30 分钟，期间用户改了信息也读不到新值。
+  修法：修改用户信息时主动 delete 缓存（或 @CacheEvict）
+
+【★ 缺口 4：getCurrentUser() 是死代码】
+
+  现状：写得很完整（三态处理 + 降级），但没有任何 Controller 调用它。
+  修法：要么接一个 GET /users/me 接口用起来，要么删掉。
+
+【★ 缺口 5：黑名单 Hash key 没有整体 TTL】
+
+  现状：blacklist:user:{userId} 这个 key 本身没有过期时间，
+        只靠"用户下次访问时"惰性清理过期的 field。
+  后果：用户登出后再也不访问，这个 key 就永久留在 Redis 里。
+  修法：给整个 key 也设一个 TTL（如 2 小时，等于 accessToken 最长剩余寿命）
+
+
+【✅ 缺口 6（曾是 P0）：缓存降级失效 —— 已修复（2026-10-06）】
+
+  ── 问题（2026-10-05 发现）──
+  findDetail 为了做空值缓存，从 @Cacheable 改成了手动
+  cacheManager.getCache("novel").get(...) 调用，
+  绕过了 AOP 切面，CacheErrorHandler 静默失效。
+
+  当时的实测（docker stop demo2-redis，5/5 次可复现）：
+    · GET /novels/1  → 挂起 60.0 秒 → HTTP 200 +
+                       {"code":500,"msg":"Redis command timed out"}
+    · GET /novels    → 不受影响，正常 200（不走缓存）
+    · 日志里 CacheErrorHandler 的 warn 一次都没触发
+    · 拆 spring-data-redis 4.1.0 字节码：RedisCache 不引用 CacheErrorHandler
+
+  原因：CacheErrorHandler 由 AbstractCacheInvoker 调用，而它是
+        CacheAspectSupport（AOP 拦截器）的父类。只有**注解驱动**的调用才
+        经过拦截器；手动 cache.get() 直接进 RedisCache，没有 try/catch 兜底。
+  ★ 一句话：**"注解生效" = "框架的切面拦住了你"。**
+
+  ★★ 为什么比"500"更糟：项目没配 spring.data.redis.timeout，
+     用的是 Lettuce 默认 60 秒命令超时 → 每个请求占满一条 Tomcat 线程
+     卡 60 秒 → Redis 一挂 + 请求量稍大就级联拖垮整个应用
+     （连不依赖 Redis 的列表接口也会开始排队）。
+
+  ★★★ 判据修正（这个认知比 bug 本身值钱）：
+     旧判据说"HTTP 200 = 降级有效"，**是错的**。
+     GlobalExceptionHandler.handleRuntimeException 没有 @ResponseStatus，
+     所有 RuntimeException 都返回 HTTP 200。
+     必须看 **body 里的 code 字段**：
+       body {"code":200,...} → 有效；body {"code":500,...} → 失效
+     ★ 通用教训：**判据本身也要验证** —— 假阳性判据比没有判据更危险。
+
+  ── ✅ 修复（2026-10-06，采用了方案 b）──
+
+    第一级 · 超时（止血）—— application-dev.properties
+      spring.data.redis.timeout=500ms
+      spring.data.redis.connect-timeout=500ms
+
+    第二级 · try-catch（治疗）—— NovelServiceIml.findDetail
+      4 处 Redis 调用各包 try-catch：
+        nullCache.get / novelCache.get / nullCache.put / novelCache.put
+      · 读失败 → 当"缓存未命中"，继续走 DB（**不要 rethrow**）
+      · 写失败 → 吞掉异常，不影响主流程
+      · catch 里打 log.warn，只打 message 不打堆栈（避免刷屏）
+
+  ── ✅ 三阶段实测数据 ──
+    ------------------------------------------------------------------
+    阶段                  耗时        HTTP   body.code   接口可用性
+    ------------------------------------------------------------------
+    ① 改造前（60s 超时）  60.0s 挂起  200    500         ❌ 打不开
+    ② 只加超时配置        0.51s       200    500         ❌ 打不开
+    ③ 再加 try-catch      1.01s       200    200         ✅ 有数据
+    ------------------------------------------------------------------
+    ★ ②→③ 才是真正的修复。② 只是 fail fast（快速失败），
+      ③ 才是 graceful degradation（优雅降级）。
+
+    并发压测（500 请求 / 100 并发 / Redis 挂）：
+      /novels/1    ：P50 1.491s，P95 2.575s，最大 2.784s，0 个超 5 秒
+      /novels 列表 ：P50 0.248s，全程 200（不依赖 Redis，未被拖垮）
+      ⇒ 级联故障被切断
+
+  ── ★ 附带发现：Lettuce 断连时会缓冲写命令 ──
+    演练时"详情缓存写入失败"的 warn 一次都没触发。
+    重启 Redis 后**不发任何请求**，novel::1 就已经存在了
+    → Lettuce 在断连期间缓冲写命令，重连后自动补发。
+    ★ 影响：put 的 catch 在当前场景不会触发；disconnectedBufferSize
+      默认 64KB，缓冲满了才真正失败 → 写失败是**延迟暴露**的。
+    ★ 本质：同步 API 掩盖了异步现实。connection.set() 返回 void，
+      **"没有返回值的远程调用，等于没有错误处理。"**
+
+  ★ 完整过程 → docs/实战笔记/05-缓存三大问题实战.txt 第四节
+
+
+################################################################################
+  二、待办清单
+################################################################################
+
+--------------------------------------------------------------------------------
+P0 · 必须做
+--------------------------------------------------------------------------------
+
+  □ 修 user:info 缓存里的 passwordHash
+    位置：UserService.getCurrentUser()
+    修法（三选一）：
+      方案一：缓存前 dbUser.setPasswordHash(null);
+      方案二：定义专门的 UserCacheVO（不含 passwordHash）
+      方案三：在 User.passwordHash 上加 @JsonIgnore
+              ★ 会影响所有序列化场景，改前先确认没有别处需要它
+
+--------------------------------------------------------------------------------
+P1 · 应该做
+--------------------------------------------------------------------------------
+
+  ✅ 已完成：缓存真正用起来（2026-09-27 落地，2026-10-05 改为手动调用）
+    落地情况（缓存名统一用 "novel"）：
+      NovelServiceIml.findDetail()      ★ 手动 cacheManager 调用
+                                              （原 @Cacheable(key="#novelId")）
+      NovelServiceIml.addChapter()      @CacheEvict(key = "#novelId")
+      NovelServiceIml.updateChapter()   @CacheEvict(key = "#novelId")
+      NovelServiceIml.deleteChapter()   @CacheEvict(key = "#novelId")  ★ 曾错写 #id
+      NovelServiceIml.deleteNovel()     @CacheEvict(key = "#id")
+      NovelServiceIml.updateNovel()     @CacheEvict(key = "#id")
+
+    ★ 教训：@CacheEvict 的 key 必须对应方法签名里**真实存在**的参数名。
+      对不上就会 evict 一个不存在的 key，真正的缓存纹丝不动。
+      详见上方"踩过的坑"章节。
+
+    ✅ 待验证项已实测通过（2026-10-05）：
+      NovelDetailVO 里的 LocalDateTime 字段，用 RedisSerializer.json()
+      能正常序列化/反序列化。Redis 里 novel::1 读回后
+      lastUpdateTime 格式正确（"2026-05-30T22:45:49"），
+      不需要显式注册 JavaTimeModule。
+
+  □ 给黑名单 Hash key 加兜底 TTL
+    位置：UserController.logout()
+    修法：put 之后加一句 expire(key, 2, TimeUnit.HOURS)
+          ★ 但注意：如果同一用户多次登出，每次 expire 会重置 TTL，
+            可以选择只在 key 不存在时设置。
+
+  □ 消除死代码：getCurrentUser() 接一个接口或删掉
+    建议：接 GET /users/me，前端可以用来刷新用户信息。
+          这样缓存逻辑就有真实调用方了，面试也讲得通。
+
+--------------------------------------------------------------------------------
+P2 · 可以做（进阶，面试高频）
+--------------------------------------------------------------------------------
+
+  ✅ 已完成（2026-10-05）：缓存穿透防护（空值缓存）
+    实现：独立的 novel-null 缓存区，TTL 5 分钟
+          findDetail 三分支判断：
+            ① 命中 novel-null → 直接抛"小说不存在"，不查库
+            ② 命中 novel      → 直接返回
+            ③ 都未命中        → 查库；库中也没有就写 novel-null 再抛异常
+          addNovel 上加 @CacheEvict(value="novel-null", key="#result.id")
+          （防止空表时把 id=1 缓存成"不存在"，导致新增第一本后 5 分钟查不到）
+    实测：GET /novels/999999 → {"code":500,"msg":"小说不存在"}，0.014 秒
+          Redis 里出现 novel-null::999999，TTL = 300 秒 ✓
+          二次请求 0.020 秒（走缓存）✓
+    ★★ 这次改动一度把缓存降级打掉了（2026-10-06 已修复）——
+       见"缺口 6"。这是本次最大的教训。
+
+  ✅ 已完成（2026-10-07）：缓存击穿防护（本地互斥锁）
+
+    实现（NovelServiceIml.findDetail）：
+      private final ConcurrentHashMap<Integer,Object> locks = new ConcurrentHashMap<>();
+      ...
+      缓存未命中后：
+        Object lock = locks.computeIfAbsent(novelId, k -> new Object());
+        synchronized (lock) {
+            // ★ 双重检查：可能已有别的线程重建好了
+            （锁内重读 nullCache / novelCache，命中就直接返回）
+            查库 → 组装 VO → 写缓存 → 返回
+        }
+
+    效果（测压，同一热点 key 并发）：
+      查库 SQL 条数 10 → 1   ✅ 击穿防护生效
+
+    ⚠ ⚠ 测压数据待复测（★ 别当结论用）
+      ------------------------------------------------------------------
+      场景             P50      max      SQL 条数   说明
+      ------------------------------------------------------------------
+      缓存命中         35ms     51ms     0          快路径
+      击穿·修复前      ?        1203ms   10         10 个线程同时冲 DB
+      击穿·修复后      1578ms   1601ms   1          1 个查库，19 个等锁
+      ------------------------------------------------------------------
+      ★ 问题 1：并发数不一致 —— 修复前 10 线程、修复后 20（1+19）。
+                这不是"三阶段对比"，是拿苹果比橘子。必须在**同并发**下重测。
+      ★ 问题 2：修复前 P50 缺失，无法对比。
+      ★ 问题 3：修复后延迟**反而升高**（1578ms > 1203ms）——
+                这是互斥锁的**预期代价**（用延迟换 DB 压力），
+                不是回归；但要能解释，且要查出"1 次查库为什么约 1.5s"。
+      ★ 问题 4：SQL 条数是怎么数的？计数方法要写出来（判据本身也要验证）。
+
+    ★ 两个遗留问题（面试会被追问）：
+      ① locks 只增不减 → 访问过的每个 novelId 永久留一个 Object，无界增长。
+         ★ 不能简单 finally remove —— 会重新引入竞态（新线程拿到新锁，
+           和等旧锁的线程并发）。稳妥方案：Caffeine（weakValues）或 Redisson。
+      ② 单机锁 ≠ 分布式锁 —— synchronized 跨不了 JVM，
+         多实例部署时每个实例各查一次库，防护退化成 N 倍。
+         ★ 真正的分布式锁：Redisson RLock 或 SETNX + Lua。
+
+    ★ 加分点：Spring 其实内置了这个模式 —— @Cacheable(sync = true)
+      （单机 per-key 锁，且框架帮你管理锁的生命周期）。
+      本项目因为要手写空值缓存用不了，但面试可以主动提。
+
+  ✅ 已完成（2026-10-06）：缓存雪崩防护（TTL 随机抖动）
+    实现：CacheConfig 用 TtlFunction 动态算 TTL
+            .entryTtl((key, value) -> {
+                int seconds = ThreadLocalRandom.current().nextInt(1500, 2101);
+                return Duration.ofSeconds(seconds);     // ★ 秒，不是分钟
+            })
+          → 1500~2100 秒 = 25~35 分钟 = 基础 30 分钟 ± 5 分钟
+          ★ 注意 nextInt 是**左闭右开**，要取到 2100 得写 2101
+    实测：novel::1 的 TTL = 1832 秒，落在区间内 ✓
+    ★ 关键认知：TtlFunction 是**每次 put 时都执行一次**，
+      不是配置时执行一次 —— 这是它和 entryTtl(Duration) 的根本区别。
+    ★ 踩过的坑：变量名叫 seconds，方法一度写成 Duration.ofMinutes(seconds)
+      → TTL 变成 25~35 **小时**（实测 122769 秒 ≈ 34 小时）。
+     单位敏感的 API（Duration / TimeUnit / BigDecimal），
+      写完要盯着看两遍：变量名、方法名、单位三者一致吗？
+
+  □ 缓存与数据库一致性
+    推荐策略：先更新数据库，再删除缓存。
+    极端并发：延迟双删（删缓存 → 更新库 → 延迟 500ms 再删一次）。
+
+  □ Redis 持久化配置
+    现状：用的是默认配置（RDB）。
+    改进：开启 AOF 或混合持久化。
+
+  □ 大 key / 热 key 排查
+    工具：redis-cli --bigkeys、--hotkeys
+
+  □ 缓存命中率监控
+    ★ 和第 12 大类（可观测性）联动。
+
+
+################################################################################
+  三、关键实现速查
+################################################################################
+
+【CacheConfig 现有配置】
+  @Configuration
+  @EnableCaching
+  public class CacheConfig implements CachingConfigurer {
+      @Bean
+      public RedisCacheManager cacheManager(RedisConnectionFactory factory) {
+          RedisCacheConfiguration config = RedisCacheConfiguration.defaultCacheConfig()
+                  // ★ 2026-10-06 改：固定 30 分钟 → 随机 1500~2100 秒（防雪崩）
+                  .entryTtl((key, value) -> Duration.ofSeconds(
+                          ThreadLocalRandom.current().nextInt(1500, 2101)))
+                  .serializeKeysWith(...StringRedisSerializer...)
+                  .serializeValuesWith(...RedisSerializer.json()...);
+          return RedisCacheManager.builder(factory)
+                  .cacheDefaults(config)
+                  // ★ novel-null 区单独设 5 分钟 TTL
+                  //   （RedisCacheConfiguration 不可变，entryTtl 返回新对象）
+                  .withInitialCacheConfigurations(
+                          Map.of("novel-null", config.entryTtl(Duration.ofMinutes(5))))
+                  .build();
+      }
+
+      @Override
+      public CacheErrorHandler errorHandler() { ... }
+      // ★ 这个降级只对**注解路径**生效（@Cacheable 等）。
+      //   findDetail 是手动 cacheManager 调用，走不到这里 ——
+      //   它在业务代码里用 4 处 try-catch 自己补降级。见"缺口 6"。
+  }
+
+【黑名单惰性清理（LoginInterceptor）】
+  Object expireObj = stringRedisTemplate.opsForHash().get(hashKey, token);
+  if (expireObj != null) {
+      long expireAt = Long.parseLong(expireObj.toString());
+      if (expireAt > System.currentTimeMillis()) {
+          writeUnauthorized(response);                          // 拦截
+          return false;
+      } else {
+          stringRedisTemplate.opsForHash().delete(hashKey, token);   // 清理放行
+      }
+  }
+
+【用户信息缓存三态】
+  get("user:info:" + userId)
+      ├─ 命中   → 反序列化返回
+      │            └─ 反序列化失败 → 删缓存 + 降级查库 + 回写
+      └─ 未命中 → 查库 + 序列化写缓存(30分钟) + 返回
+
+
+################################################################################
+  四、完成度记录（自己往后追加）
+################################################################################
+
+  日期        变动                                    完成度
+  ------------------------------------------------------------------
+  2026-09-22  初始盘点                                 5/6 主体步骤
+  2026-09-22  定位到 CacheConfig 零使用等 5 处缺口      ★ 新增 P1
+  2026-09-27  @Cacheable 落地（findDetail + 4 处 evict）
+  2026-10-05  空值缓存防穿透（novel-null 区）          进阶项 +1
+  2026-10-05  ★★ 实测发现降级已失效（缺口 6）          ★ 新增待修复项
+  2026-10-06  TTL 随机抖动（TtlFunction）              雪崩 ✓
+  2026-10-06  ★★ 降级修复：超时 + 4 处 try-catch      降级 ✓（缺口 6 关闭）
+  2026-10-06  故障演练 + 并发压测，三阶段数据齐全      8/12（67%）
+  2026-10-06  ★ 发现 Lettuce 断连缓冲写命令             归档
+  2026-10-07  本地互斥锁防击穿（ConcurrentHashMap + synchronized）  击穿 ✓
+              → 进阶 4/8，总计 10/14 = 71%（判据 A 的 05 达标 ✅）
+  2026-10-07  ⚠ 遗留：locks 无界增长 + 单机锁局限        待处理
+  ------------------------------------------------------------------
+  ________    ______________________________________  ________
+  ------------------------------------------------------------------
+  ________    ______________________________________  ________
+
+================================================================================
+                              文件结束
+================================================================================

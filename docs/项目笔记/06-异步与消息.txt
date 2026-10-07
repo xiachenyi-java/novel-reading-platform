@@ -1,0 +1,175 @@
+================================================================================
+【项目笔记 · 06】异步与消息
+================================================================================
+  对应知识笔记：docs/知识笔记/06-异步与消息.txt
+  相关代码：service/NovelServiceIml.java（排行榜）、config/LoginInterceptor.java（黑名单）
+
+
+################################################################################
+  一、现状盘点
+################################################################################
+
+【完成度】3/8 主体步骤（含扩展项约 20%）★ 缓存与排行榜已完成，异步/MQ 还未开始
+
+  ------------------------------------------------------------------
+  步骤   内容                            状态    代码位置
+  ------------------------------------------------------------------
+  01     Redis Hash 重构黑名单            ✓      LoginInterceptor
+  02     给小说详情加缓存（@Cacheable）   ✓      手动 CacheManager（未用 @Cacheable）
+  03     ZSet 实现排行榜                  ✓      NovelServiceIml 总榜 + 日榜
+  04     Redis 分布式锁实现签到           □
+  05     引入 RabbitMQ                    □
+  06     发布章节时发 MQ 消息             □
+  07     给 MQ 消费加死信队列             □
+  08     Redisson 替换手写锁              □
+  ------------------------------------------------------------------
+
+【已实现：ZSet 排行榜】
+
+  ------------------------------------------------------------------
+  榜单      写入位置              Key                          状态
+  ------------------------------------------------------------------
+  总榜      readChapter()         ranking:novel:total          ✓ 正常
+  日榜      readChapter()         ranking:novel:day:{yyyyMMdd} ✓ 写入 + 2 天 TTL
+  ------------------------------------------------------------------
+
+  代码位置：NovelServiceIml.findRanking() / findDailyRanking()
+
+【技术亮点（面试可以主动讲）】
+
+  ✓ ZSet 选型正确：跳表实现，插入和查询都是 O(log N)，
+    比数据库 ORDER BY 的 O(N log N) 快几个数量级
+  ✓ 用 findAllById 批量查库，避免了 N+1 问题（1 次查询而不是 N 次）
+  ✓ 用 Map 保序组装：
+     findAllById 返回的 List 顺序不保证和传入的 id 列表一致，
+     所以用 novelIds（有序）遍历 + novelMap（O(1) 查找）来保序。
+     ★ 这个细节很多人会踩坑，是很好的面试素材。
+  ✓ 小说被删时跳过（novelMap.get(id) == null 就 continue），防止 NPE
+  ✓ 热度用 Double 存、Long 返回，前端看到的是整数
+
+【★ 缺口 3：排行榜无防刷】
+
+  readChapter() 每调用一次就 +1，用户按 F5 刷新 100 次就是 100 热度。
+  写个脚本一分钟就能把垃圾小说刷到榜首。
+
+【★ 缺口 5：@Async 和 MQ 完全没开始】
+
+  这个包叫"异步"，但异步的部分（第 4-8 步）一步都没做。
+
+
+################################################################################
+  二、待办清单
+################################################################################
+
+--------------------------------------------------------------------------------
+P0 · 必须做
+--------------------------------------------------------------------------------
+
+  ✅ 已完成：日榜写入（2026-10-05 复核）
+    位置：NovelServiceIml.readChapter()
+    做法：每次阅读时给当天的日榜 key 也 incrementScore +1：
+      String dailyRankKey = "ranking:novel:day:" +
+              LocalDate.now(ZoneId.of("Asia/Shanghai"))
+                       .format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+      stringRedisTemplate.opsForZSet().incrementScore(dailyRankKey, String.valueOf(novelId), 1);
+      stringRedisTemplate.expire(dailyRankKey, 2, TimeUnit.DAYS);
+    验证：调一次 /novels/{id}/chapters/{id}，然后
+          redis-cli ZREVRANGE ranking:novel:day:20261005 0 -1 WITHSCORES
+
+  □ 排行榜防刷
+    位置：NovelServiceIml.readChapter()
+    修法（由简到繁）：
+      方案一：同一用户对同一小说 5 分钟内只计一次
+              key = rank:lock:{userId}:{novelId}
+              setIfAbsent(key, "1", 5, TimeUnit.MINUTES) 返回 true 才加分
+      方案二：只有登录用户才计入热度
+      方案三：登录用户权重 1，游客权重 0.1
+    ★ 方案一需要用户登录，游客路径下 UserContext 可能是空的，要判空。
+
+--------------------------------------------------------------------------------
+P1 · 应该做
+--------------------------------------------------------------------------------
+
+  ✅ 已完成：日榜 key 设置 TTL（2026-10-05 复核）
+    做法：每次 incrementScore 后无条件 expire(dailyRankKey, 2, TimeUnit.DAYS)。
+    ★ 澄清：这里无条件 expire 并不会让 key 永不过期 —— key 名里带了日期，
+      过了当天就不会再被 touch，TTL 自然到期；
+      代价只是每次阅读多一次 Redis 往返，可接受。
+
+--------------------------------------------------------------------------------
+P2 · 可以做（学习路径）
+--------------------------------------------------------------------------------
+
+  □ 第 4 步：Redis 分布式锁实现"用户签到"
+    要素：SETNX + 过期时间 + 唯一 value（防误删）+ Lua 保证原子性
+    key：sign:{userId}:{yyyyMMdd}
+    ★ 这是理解分布式锁的最好练习，手写一遍再上 Redisson 才有对比。
+
+  □ 第 6 步：@Async + 自定义线程池（★ 建议先做这个，门槛最低）
+    配置：corePoolSize=8, maxPoolSize=16, queueCapacity=200,
+          CallerRunsPolicy, 线程名前缀 novel-async-
+    实战：发布章节后异步发通知
+    ★ 详见知识笔记 10-并发与线程安全 第 10.4 节
+
+  □ 第 8 步：Redisson 替换手写锁
+    重点理解"看门狗（Watch Dog）"如何解决
+    "业务执行时间 > 锁过期时间"的问题。
+
+  □ 第 5 步：引入 RabbitMQ
+    ★ 建议顺序：先 @Async 理解"异步"，再上 MQ 理解"解耦 + 削峰"。
+
+  □ 第 7 步：死信队列 + 消息确认机制
+  □ 消息幂等：messageId + Redis SETNX 去重
+
+
+################################################################################
+  三、关键实现速查
+################################################################################
+
+【排行榜读取流程】
+  1. reverseRangeWithScores("ranking:novel:total", 0, top-1)
+     → 返回 Set<TypedTuple<String>>，按 score 降序
+  2. 拆成两个容器：
+       List<Integer> novelIds   （保持顺序）
+       Map<Integer, Double> scoreMap（存热度）
+  3. findAllById(novelIds) 批量查库
+     → 转成 Map<Integer, Novel> novelMap
+  4. 按 novelIds 顺序遍历，从 novelMap 取详情、从 scoreMap 取热度
+     → 组装 NovelRankVO
+     → novelMap.get(id) == null 时 continue（小说已删）
+
+【Redis Key】
+  ranking:novel:total            ZSET  总榜，无 TTL
+  ranking:novel:day:{yyyyMMdd}   ZSET  日榜，写入后 expire 2 天
+
+【热度写入点】
+  NovelServiceIml.readChapter()：
+    总榜、日榜都写：
+      stringRedisTemplate.opsForZSet()
+              .incrementScore("ranking:novel:total", String.valueOf(novelId), 1);
+      stringRedisTemplate.opsForZSet()
+              .incrementScore(dailyRankKey, String.valueOf(novelId), 1);
+      stringRedisTemplate.expire(dailyRankKey, 2, TimeUnit.DAYS);
+
+【接口】
+  GET /novels/ranking?top=10&type=total|daily
+  top 上限被限制为 100（硬编码）
+  ★ 注意：前端 api/novel.js 的 getRanking 只接受一个参数，
+    第二个参数 type 被丢弃了，所以日榜切换实际不生效（前端 bug）
+    位置：novel-frontend/src/api/novel.js
+
+
+################################################################################
+  四、完成度记录（自己往后追加）
+################################################################################
+
+  日期        变动                                    完成度
+  ------------------------------------------------------------------
+  2026-09-22  初始盘点                                 2/8 主体步骤
+  2026-09-22  定位到日榜三处缺口 + 前端传参 bug        ★ 新增 P0
+  ------------------------------------------------------------------
+  ________    ______________________________________  ________
+
+================================================================================
+                              文件结束
+================================================================================

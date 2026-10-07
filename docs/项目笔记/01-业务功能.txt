@@ -1,0 +1,240 @@
+================================================================================
+【项目笔记 · 01】业务功能
+================================================================================
+  对应知识笔记：docs/知识笔记/01-业务功能.txt
+  相关代码：service/NovelServiceIml.java、controller/NovelController.java
+            novel-frontend/src/views/
+
+
+################################################################################
+  一、现状盘点
+################################################################################
+
+【完成度】6/6  ■■■■■■■■  100%  （原始清单 4 步 + 搜索 + 分类筛选）
+
+【已实现】
+
+  ✓ 1. 实体建模：Book → Novel + Chapter
+      · Novel：书名、简介、封面、分类、状态、总字数、最后更新时间
+      · Chapter：novelId、章号、标题、正文(LONGTEXT)、字数、创建时间
+      · 关系用 novelId 手动关联，未用 @OneToMany（避免加载正文）
+
+  ✓ 2. 管理员接口（6 个）
+      · 创建小说         POST   /novels
+      · 发布章节         POST   /novels/{novelId}/chapters
+      · 修改章节         PUT    /novels/{novelId}/chapters/{chapterId}
+      · 删除章节         DELETE /novels/{novelId}/chapters/{chapterId}
+      · 修改小说         PUT    /novels/{id}
+      · 删除小说         DELETE /novels/{id}
+      全部标注 @RequireAdmin
+
+  ✓ 3. 读者接口（4 个）
+      · 小说分页列表     GET    /novels?page=1&size=10
+      · 小说详情+目录    GET    /novels/{id}
+      · 阅读章节         GET    /novels/{novelId}/chapters/{chapterId}
+      · 排行榜           GET    /novels/ranking?top=10&type=total
+      游客可访问（GET + /novels 前缀白名单）
+
+  ✓ 4. 本地图片存储
+      · 上传接口         POST   /upload
+      · 静态映射         /uploads/**
+      · UUID 重命名 + 路径穿越校验
+
+【代码位置速查】
+  ------------------------------------------------------------------
+  功能                    位置
+  ------------------------------------------------------------------
+  创建小说                NovelServiceIml.addNovel()
+  发布章节（算章号+累加） NovelServiceIml.addChapter()
+  修改章节（算字数差）    NovelServiceIml.updateChapter()
+  删除章节（扣减+重排）   NovelServiceIml.deleteChapter()
+  删除小说（级联）        NovelServiceIml.deleteNovel()
+  分页列表                NovelServiceIml.findPage()
+  详情+脱敏目录           NovelServiceIml.findDetail()
+  阅读（加热度）          NovelServiceIml.readChapter()
+  排行榜                  NovelServiceIml.findRanking() / findDailyRanking()
+  上传                    FileController.upload()
+  ------------------------------------------------------------------
+
+【功能缺口盘点（2026-09-27 更新）】
+
+  ------------------------------------------------------------------
+  功能              前端入口        后端                  状态
+  ------------------------------------------------------------------
+  分类筛选          有             ✓ Specification       ✅ 已下推
+  小说搜索          有（搜索框）   ✓ LIKE 模糊匹配       ✅ 已完成
+  日榜              有（切换按钮） ✓ 读 + 写 + TTL       ✅ 已修
+  收藏/加入书架     有（按钮）     无                    ✗ 前端假动作
+  打分              有（按钮）     无                    ✗ 前端假动作
+  我的书架页面      有（路由）     无                    ★ 空壳
+  免费 tab          有（按钮）     无 isFree 字段        ★ 死代码
+  ------------------------------------------------------------------
+
+
+################################################################################
+  二、待办清单
+################################################################################
+
+--------------------------------------------------------------------------------
+P0 · 必须做（功能是坏的，不是没做）
+--------------------------------------------------------------------------------
+
+  ✅ 已完成：日榜写入（2026-09）
+    修法：readChapter() 里在总榜加分旁边，给当天的日榜 key 也加一次分
+      String today = LocalDate.now(ZoneId.of("Asia/Shanghai"))
+                          .format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+      String dailyRankKey = "ranking:novel:day:" + today;
+      stringRedisTemplate.opsForZSet().incrementScore(dailyRankKey, novelId, 1);
+      stringRedisTemplate.expire(dailyRankKey, 2, TimeUnit.DAYS);
+    ★ 时区统一用 Asia/Shanghai，和 findDailyRanking() 的读法一致
+
+  □ 排行榜防刷
+    问题：readChapter() 每调用一次就 +1，用户按 F5 刷新 100 次就是 100 热度。
+    后果：写个脚本一分钟就能把垃圾小说刷到榜首。
+    位置：NovelServiceIml.readChapter()
+    修法（由简到繁）：
+      方案一：同一用户对同一小说 N 分钟内只计一次
+              key = rank:lock:{userId}:{novelId}，SETNX + 5分钟过期
+      方案二：只有登录用户才计入热度（游客不计）
+      方案三：登录用户权重 1，游客权重 0.1，加时间衰减
+
+--------------------------------------------------------------------------------
+P1 · 应该做（性能和数据正确性）
+--------------------------------------------------------------------------------
+
+  ✅ 已完成：日榜 key TTL（2026-09）
+    做法：每次写入后 expire(dailyRankKey, 2, TimeUnit.DAYS)
+    ★ 澄清一个问题：每次 incrementScore 后都调 expire 会不断推迟过期时间吗？
+      —— 这个场景下不会。因为 key 名里带了日期，
+      过了今天就不会再被 touch，TTL 自然到期。
+      代价只是每次阅读多一次 Redis 往返，可接受。
+
+  ✅ 已完成：分类筛选下推到后端（2026-09）
+    做法：
+      后端：GET /novels?page=&size=&category=&status=&keyword=
+            用 JpaSpecificationExecutor + Specification 动态拼条件
+            新增 GET /novels/categories 返回 DISTINCT 分类
+      前端：loadNovels() 删掉所有客户端 filter，改为传参给后端
+            分类列表从接口动态加载，不再硬编码
+    效果：total 变成真实值，翻页时筛选条件保持（实测验证过）
+    详见：项目笔记/07-数据访问.txt
+
+  □ readChapter 的 Redis 写入移出只读事务
+    问题：readChapter() 标了 @Transactional(readOnly = true)，
+          但里面在写 Redis。Redis 不受数据库事务保护。
+    后果：数据库回滚了热度已加上；高并发下热点 key 竞争激烈。
+    位置：NovelServiceIml.readChapter()
+    修法：移到事务提交后（TransactionSynchronizationManager），
+          或者改成异步批量累加。
+
+--------------------------------------------------------------------------------
+P2 · 可以做（功能补全，练手价值高）
+--------------------------------------------------------------------------------
+
+  □ 建收藏表 + 收藏/取消收藏接口
+    价值：你的第一个"多对多关系"，第一次写联合唯一索引。
+    表设计：
+      user_collect：id, user_id, novel_id, create_time
+      唯一索引 (user_id, novel_id) —— 防重复收藏
+    ★ 注意防水平越权：查询条件必须带 userId，
+      不要用"先查出来再判断是不是自己的"。
+
+  □ 建评分表 + 打分接口
+    表设计：
+      user_rating：id, user_id, novel_id, score(1-5), create_time
+      novel 表加冗余字段：rating_count、rating_avg
+    练手点：平均分的聚合计算 + 冗余字段维护（和 totalWords 一个套路）
+
+  □ 填充 MyShelf.vue 书架页面
+    依赖：先做完收藏表。
+    现状：文件里只有 <div>我的书架（需登录）</div>，
+          但路由、首页入口、排行榜入口都已经挂好了。
+
+  ✅ 已完成：小说搜索（2026-09）
+    做法：Specification 的 titleContains 用 LIKE '%keyword%'
+    接口：GET /novels?keyword=剑
+    ★ 用 EXPLAIN 验证过：LIKE 以 % 开头会 type=ALL 全表扫描，
+      10 万数据下约 200ms。数据量再涨一个数量级要上全文索引/ES。
+    遗留：keyword 没 trim，输入 " 剑 " 匹配不到"剑来"
+
+  ✅ 已完成：修改小说接口（2026-09-29）
+    接口：PUT /novels/{id}   管理员    @RequestBody NovelDTO
+    链路：INovelService.updateNovel → NovelServiceIml.updateNovel
+    已做到：@RequireAdmin + @Transactional(rollbackFor) + @Valid
+            + @CacheEvict(value="novel", key="#id") + Result<Void>
+    已修复（2026-10-05）：参数注解 @RequestParam 已改为 @PathVariable，
+            PUT /novels/{id} 不再返回 400（此前取不到路径里的 id）
+
+  ⚠️ 另一个设计问题：coverUrl 会被覆盖成 null
+    现状：novel.setCoverUrl(dto.getCoverUrl())
+    后果：前端只想改标题、不传 coverUrl 时，原封面被清空
+    说明：这是 PUT（全量更新）的正常语义，但前端必须知道要传全字段
+          如果要支持部分更新，应该用 PATCH + 单独的 DTO
+
+  □ P1：删掉前端的"免费" tab
+    位置：NovelListView.vue 第 11 行
+    问题：isFree 字段在 Novel 实体里不存在，
+          switchTab('free') 传的 status 是空串 → 查全部。
+          用户点了"免费"和点"全部"结果一样，会以为是 bug。
+    修法：删掉那行 span，或保留但加 ElMessage.info('开发中') 提示
+
+  □ 把收藏数、评分数接进排行榜的 score 计算
+    现状：排行榜只统计阅读次数，比较单薄。
+    改进：score = 阅读数 × 1 + 收藏数 × 3 + 评分 × 5（权重自己定）
+    价值：让排行榜更有含金量，面试也能讲出"多维度热度计算"。
+
+
+################################################################################
+  三、完成度记录（自己往后追加）
+################################################################################
+
+  日期        变动                                    完成度
+  ------------------------------------------------------------------
+  2026-09-22  初始盘点                                 4/4 (100%) 功能
+                                                       ★ 但 5 项待补
+  2026-09-27  新增小说搜索（LIKE 模糊匹配）            6/6 (100%)
+  2026-09-27  分类筛选下推到后端（Specification）
+  2026-09-27  日榜写入 + TTL
+  2026-09-27  前端删除客户端 filter，修复假分页
+  ------------------------------------------------------------------
+  ________    ______________________________________  ________
+
+
+################################################################################
+  四、面试话术（可直接背）
+################################################################################
+
+【Q：你的搜索和筛选功能怎么做的？】
+  "列表接口支持分页、关键词搜索、分类筛选、状态筛选四个参数，
+   都可以自由组合。
+
+   后端用 JpaSpecificationExecutor + Specification 动态拼查询条件 ——
+   每个条件写一个独立方法，条件为空时返回 null，
+   Spring Data 会自动忽略。这样加新筛选维度不用改已有代码，
+   也避免了方法名推导的组合爆炸（3 个条件就是 8 个方法）。
+
+   分类列表我没有写死在前端，而是加了一个
+   GET /novels/categories 接口，
+   用 SELECT DISTINCT category 返回库里实际存在的分类，
+   这样新分类会自动出现。"
+
+【★ Q：这个功能你修过什么 bug？（这是加分回答）】
+  "原来的分类筛选是前端做的 —— 后端只返回当前页的 8 条，
+   前端在这 8 条里 filter 分类。
+
+   问题有两个：一是如果第 1 页没有'玄幻'，用户会以为没有玄幻小说，
+   但库里其实有；二是 total 显示的是全库数量，和实际展示的条数对不上；
+   三是翻页之后筛选就失效了。
+
+   我把筛选条件下推到后端，前端只负责传参。
+   改完之后 total 是当前筛选条件的真实数量，翻页时条件也保持住了。
+   我用 45 本真实数据验证过：选'玄幻'返回 totalElements=6，
+   和 SELECT COUNT(*) WHERE category='玄幻' 完全一致，
+   翻到第 2 页 total 仍然是 6。"
+
+  ★ 这个回答的价值在于：能说出"我发现了什么问题、怎么定位、
+    怎么验证修好了"，比只说"我做了搜索功能"高一个档次。
+
+================================================================================
+                              文件结束
+================================================================================

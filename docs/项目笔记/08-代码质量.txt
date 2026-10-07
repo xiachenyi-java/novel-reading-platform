@@ -1,0 +1,343 @@
+================================================================================
+【项目笔记 · 08】代码质量
+================================================================================
+  对应知识笔记：docs/知识笔记/08-代码质量.txt
+  相关代码：全项目（common/、config/、service/、vo/）
+
+
+################################################################################
+  一、现状盘点
+################################################################################
+
+【完成度】7/9  ■■■■■■■□□  约 41%（含新发现的问题共 17 项）
+
+  ------------------------------------------------------------------
+  步骤   改进内容                        状态    证据
+  ------------------------------------------------------------------
+  01     Redis KEYS 改 Hash               ✓      黑名单用 Hash 分组，不再遍历
+  02     文件上传安全校验                 ✓      路径穿越校验 + UUID 重命名
+  03     消除重复查询                     ✓      orElseThrow 一次查询搞定
+  04     统一自定义业务异常               ✓      BusinessException
+  05     @Transactional 加 rollbackFor    ✓      所有写方法都加了
+  06     ObjectMapper 交给 Spring 注入    ✓      JacksonConfig 已删除（8edf2ac）
+  07     读者接口白名单                   ✓      isGuestEndpoint 判定
+  08     提取配置常量                     △      file.base-url 提了，CORS 没提
+  09     抽离 Service 接口层              ✓      INovelService + NovelServiceIml
+  ------------------------------------------------------------------
+
+【做得好的地方（面试可以主动讲）】
+
+  ✓ 第 1 步：从 KEYS 到 Hash 的思路值得记录
+     "不要用遍历去解决一个设计问题，要换数据结构让它自然成立。"
+     KEYS 是 O(N) 会阻塞 Redis，生产环境是事故级操作。
+
+  ✓ 第 3 步：两次查询合并成一次，同时消除了并发窗口
+     原写法"先判断存在，再查询"，两次查询之间用户可能被删除。
+     合并成 orElseThrow 后：代码更短 + 性能更好 + 更安全。
+     这是"代码质量的核心价值"的典型例子。
+
+  ✓ 第 4 步：业务异常用 warn（不带堆栈），系统异常用 error（带堆栈）
+     日志分级清晰，便于线上排查和告警分级。
+
+  ✓ 第 2 步：路径校验用 normalize + startsWith
+     先把 ../ 解析掉再判断是否在允许目录内，是标准做法。
+
+【✅ 已解决：JacksonConfig 已删除（第 6 步）】
+
+  ★ 2026-10-05 核实：config/JacksonConfig.java **文件已不存在**，
+    在 commit 8edf2ac「修复json的版本问题」时被清掉。
+
+  当时的原理记录（留着当知识，面试会问）：
+    原来的写法是：
+      @Configuration
+      public class JacksonConfig {
+          @Bean
+          public ObjectMapper objectMapper() {
+              return new ObjectMapper();          // ← 裸的，没注册任何模块
+          }
+      }
+    问题链：
+    ① Spring Boot 的 JacksonAutoConfiguration 带 @ConditionalOnMissingBean，
+       "用户没自定义我才创建"
+    ② 自己定义了 → Boot 那套配好的 ObjectMapper 就不生成了
+    ③ 于是丢掉了：JavaTimeModule（LocalDateTime 序列化）、
+       WRITE_DATES_AS_TIMESTAMPS=false、FAIL_ON_UNKNOWN_PROPERTIES=false 等
+    ④ 用裸 ObjectMapper 序列化 LocalDateTime 默认会抛异常
+
+  ★ 现在的状态：UserService 注入的 tools.jackson.databind.ObjectMapper
+    是 Boot 自动配置的 Jackson 3 实例（Boot 4.x 已换到 Jackson 3），
+    不再是裸的。
+
+  ★ 通用修法（三选一，以后遇到类似情况用）：
+    方案A（推荐）：直接删掉自定义类，让 Boot 自动配置生效 ← 本次选的就是这个
+    方案B：用 Jackson2ObjectMapperBuilderCustomizer 扩展而不是替换
+    方案C：@Bean ObjectMapper objectMapper(ObjectMapper defaultMapper)
+            { return defaultMapper.copy().setSerializationInclusion(...); }
+
+【★ 待补 2：CorsConfig 硬编码】
+
+  位置：config/CorsConfig.java
+    .allowedOrigins("http://localhost:5173")     // ← 上线必须改
+  修法：提到配置文件
+    @Value("${cors.allowed-origins}")
+    private String[] allowedOrigins;
+
+【★ 项目实测发现的其他问题（共 8 处）】
+
+  ------------------------------------------------------------------
+  编号  问题                                    位置
+  ------------------------------------------------------------------
+  1     全局异常处理器参数类型不匹配            GlobalExceptionHandler
+        @ExceptionHandler(MaxUploadSizeExceededException.class)
+        方法参数却写的是 MethodArgumentNotValidException
+        → 处理器自己崩，用户看到 500 而不是友好提示
+  ------------------------------------------------------------------
+  2     NovelRankVO 字段名首字母大写            vo/NovelRankVO.java
+        private Integer NovelId / Title / CoverUrl / Heat
+        · 违反 Java 命名规范
+        · Jackson 序列化出的 key 是 novelId，前端读 item.NovelId 对不上
+        ★ 需打开排行榜页面 F12 确认实际返回的 JSON
+  ------------------------------------------------------------------
+  3     Novel.setChapters() 是空方法体          entity/Novel.java
+        没有任何调用方，属于会误导后来者的死代码
+  ------------------------------------------------------------------
+  4     UserService.refresh 里未使用的变量      service/UserService.java
+        String key = "refresh:" + userId;   ← 定义了从没用过
+  ------------------------------------------------------------------
+  5     两个排行榜方法 100% 重复                 NovelServiceIml
+        findRanking / findDailyRanking 除首行外完全一样
+        应提取 findRankingByKey(rankKey, top)
+  ------------------------------------------------------------------
+  6     兜底异常用 log.warn 而非 log.error       GlobalExceptionHandler
+        兜底是"不该发生的事发生了"，应该 error 级别
+  ------------------------------------------------------------------
+  7     LoginInterceptor 里的空 catch           config/LoginInterceptor.java
+        catch (Exception e) { /* 什么也不做 */ }
+        注释说"保持日志干净"，但这样连"有人用伪造 token 攻击"都发现不了
+        应加 log.debug 或统计计数器
+  ------------------------------------------------------------------
+  8     测试类引用已删除的类                     src/test/     ✅ 已修
+        旧 Book 测试类已改名为 NovelServiceTest
+        UserControllerTest 的接口路径已改为 /novels、/users/logout
+  ------------------------------------------------------------------
+
+  【同批已确认修复的老问题】
+    ✅ 原问题 5  两个排行榜方法 100% 重复  → 已抽成 findRankingByKey
+    ✅ 原问题 8  测试类引用已删除的类      → 已修（详见 11-测试体系.txt）
+    ✅ 原问题 4  UserService.refresh 未使用变量 → 复查代码，已不存在
+
+
+################################################################################
+  ★ 2026-10-05 代码规范化时新发现（共 5 处 · 全部未修复）
+################################################################################
+
+  说明：这一批是"代码排版与注释规范化"时，逐行读代码顺带读出来的。
+        全部保留原状未改，等你自己决定怎么处理。
+
+--------------------------------------------------------------------------------
+N1  ★ 黑名单过期判断的边界不一致
+--------------------------------------------------------------------------------
+  位置：config/LoginInterceptor.java
+    游客路径（约 69 行）：  if (expireAt >= System.currentTimeMillis())
+    严格路径（约 116 行）： if (expireAt >  System.currentTimeMillis())
+
+  【问题】两处做的是同一件事（判断 token 在不在黑名单），
+          但一个用 >=，一个用 >。
+
+  【后果】当 expireAt 恰好等于当前毫秒时，两条路径行为不同：
+            · 游客路径 → 当作"已过期"，删除后放行
+            · 严格路径 → 当作"仍在黑名单"，返回 401
+          毫秒级窗口，实际影响很小。但"同一逻辑两处实现不一致"
+          是将来埋 bug 的典型位置。
+
+  【修法】统一成一个私有方法，两处共用：
+            private boolean isBlacklisted(String hashKey, String token)
+
+  【验证】构造一个 expireAt = 当前毫秒 的 token，两条路径行为应一致。
+
+--------------------------------------------------------------------------------
+N2  passwordHash 被写进 Redis 缓存
+--------------------------------------------------------------------------------
+  位置：service/UserService.java 的 getCurrentUser，第 4 步
+
+    String json = objectMapper.writeValueAsString(dbUser);
+    stringRedisTemplate.opsForValue().set(key, json, 30, TimeUnit.MINUTES);
+
+  【问题】dbUser 是从数据库查出来的完整实体，passwordHash 还在里面。
+
+  【后果】BCrypt 哈希被写进 Redis。虽然哈希不能直接反推密码，
+          但 Redis 一旦泄露（未授权访问、快照文件泄露），
+          攻击者拿到哈希可以离线暴力破解。
+          ★ 这条在 项目说明-给AI.txt 里是已知问题 4，一直没修。
+
+  【修法】二选一：
+    a) 写缓存前 dbUser.setPasswordHash(null)
+       ★ 注意：这会让方法返回的 User 也没有 passwordHash，
+         需要先确认调用方有没有依赖这个字段
+    b) 定义一个不含密码字段的 CacheVO，缓存和返回都用它（更干净）
+
+  【验证】redis-cli GET user:info:1 → 返回值里不应出现 passwordHash
+
+--------------------------------------------------------------------------------
+N3  LoginInterceptor 的空 catch 吞掉异常
+--------------------------------------------------------------------------------
+  位置：config/LoginInterceptor.java 游客路径的 catch 块（约 83 行）
+
+    catch (Exception e) {
+        // Token 无效，什么都不做（不打印错误，保持日志干净）
+    }
+
+  【问题】注释的理由是"保持日志干净"，但这样连"有人用伪造 token 扫描"
+          都发现不了 —— 攻击行为和正常失败看着一模一样。
+          ★ 这是 项目说明-给AI.txt 里的已知问题 23。
+
+  【修法】加一行 log.debug("Token 解析失败: {}", e.getMessage())
+          debug 级别不会污染正常日志，排查问题时可以临时打开。
+
+  【验证】用一个乱码 token 请求 /novels，debug 日志里应出现这一行。
+
+--------------------------------------------------------------------------------
+N4  未使用的 import                        ✅ 已解决（2026-10-07 核对代码）
+--------------------------------------------------------------------------------
+  位置：service/NovelServiceIml.java
+        import org.springframework.cache.annotation.Cacheable;
+
+  【原因】findDetail 从 @Cacheable 改成手动 cacheManager 调用后，这个 import 就失效了。
+  【修法】删掉这一行。
+  【验证】./mvnw clean compile 通过（说明确实没被用到）。
+
+  ★ 2026-10-07 核对：该 import **已不存在**。
+    NovelServiceIml.java 的 import 区只剩 Cache 与 CacheEvict
+    （CacheEvict 仍被 6 个 @CacheEvict 注解使用），Cacheable 已清掉。
+    ⇒ 这条已闭环，不必再动。
+
+--------------------------------------------------------------------------------
+N5  通配符 import
+--------------------------------------------------------------------------------
+  位置：service/NovelServiceIml.java
+        import java.util.*;
+
+  【问题】通配符导入隐藏了"到底用了哪些类"，也让 IDE 自动导入行为不稳定。
+  【实际用到】ArrayList / HashMap / List / Map / Optional / Set（共 6 个）
+  【修法】展开成 6 行具体 import。
+  【验证】./mvnw clean compile 通过。
+
+  ★ 例外：org.springframework.web.bind.annotation.* 这类 Spring 注解的
+    通配符导入在社区里被广泛接受（注解太多，逐个列反而难读），
+    所以 NovelController 里那一处可以保留。
+
+================================================================================
+
+--------------------------------------------------------------------------------
+P0 · 必须做
+--------------------------------------------------------------------------------
+
+  □ 修全局异常处理器的参数类型（问题 1）
+    位置：common/GlobalExceptionHandler.java
+    改动：
+      @ExceptionHandler(MaxUploadSizeExceededException.class)
+      public Result<Void> handleFileSizeException(MaxUploadSizeExceededException e) {
+          log.warn("传输文件过大: {}", e.getMessage());
+          return Result.error("上传失败：文件大小不能超过 10MB");
+      }
+    验证：上传一个 15MB 的文件，应该返回友好提示而不是 500
+
+  □ 兜底异常改成 error 级别（问题 6）
+    位置：common/GlobalExceptionHandler.java
+    改动：log.warn("最后的异常处理器:", e)  →  log.error("未捕获异常", e)
+
+--------------------------------------------------------------------------------
+P1 · 应该做
+--------------------------------------------------------------------------------
+
+  ✅ 已删除：JacksonConfig（第 6 步）
+    位置：config/JacksonConfig.java
+    状态：文件已删除（commit 8edf2ac）。
+    ★ 已验证：2026-10-05 实测 Redis 里 novel::1 读回后
+      lastUpdateTime 格式正确（"2026-05-30T22:45:49"），无序列化异常。
+
+  □ 修正 NovelRankVO 字段命名（问题 2）
+    位置：vo/NovelRankVO.java
+    改动：NovelId → novelId，Title → title，CoverUrl → coverUrl，Heat → heat
+    ★ 这个改动会同时影响前端！前端 RankingView.vue 里读的是 item.NovelId，
+      要一起改成 item.novelId。这是前后端一起改的联动修复。
+
+  ✅ 已抽取：两个排行榜方法的重复代码（问题 5）
+    位置：NovelServiceIml
+    现状：已新增 private List<NovelRankVO> findRankingByKey(String rankKey, int top)
+          findRanking / findDailyRanking 都委托给它，
+          并带 try-catch 降级（Redis 异常时返回空列表而不是抛出去）
+
+  □ CORS 白名单配置化（第 8 步）
+    位置：config/CorsConfig.java + application-*.properties
+    改动：dev 配 http://localhost:5173，prod 配正式域名
+
+  □ 排行榜 top 上限、分页 size 上限配置化
+    位置：NovelController.ranking()、NovelServiceIml.findPage()
+    改动：提取常量或配置项
+
+  □ 清理死代码（问题 3、4）
+    · 删除 Novel.setChapters(List<Chapter>)
+    · 删除 UserService.refresh 里未使用的 String key
+
+  □ 给 LoginInterceptor 的空 catch 加日志（问题 7）
+    改动：catch 块里加 log.debug("Token 解析失败: {}", e.getMessage())
+    ★ 或者用一个计数器统计失败次数，异常量突增时告警。
+
+--------------------------------------------------------------------------------
+P2 · 可以做（工具化）
+--------------------------------------------------------------------------------
+
+  □ 引入 Alibaba Java Coding Guidelines 插件
+    位置：IDEA → Settings → Plugins → 搜 "Alibaba Java Coding Guidelines"
+    ★ 能自动抓出上面那些命名/死代码问题，装完扫一遍
+  □ 引入 SonarLint，看代码打多少分
+  □ 写一份《代码 Review 自查清单》
+  □ 加 .editorconfig 统一代码格式
+  □ 日志脱敏专项检查
+    检查有没有 log.info("user={}", user) 这种（@Data 的 toString 包含 passwordHash）
+
+
+################################################################################
+  三、代码质量改进的通用思路（自己的总结）
+################################################################################
+
+【判断标准】
+  · 新同事接手，能不能在 1 小时内看懂？
+  · 三个月后自己回来改，还记不记得为什么这么写？
+  · 有没有"这段代码删掉好像也没影响"的地方？
+
+【三个层次的改进】
+  第一层：消除明显的坏味道
+    死代码、重复代码、魔法数字、硬编码、命名不规范
+
+  第二层：提升表达力
+    用异常类型表达意图（BusinessException vs RuntimeException）
+    用数据结构表达约束（Hash 分组 vs 遍历查找）
+    用配置表达环境差异
+
+  第三层：用工具兜底
+    静态检查（Alibaba 插件）、SonarLint、代码格式化
+
+【最好的改进长什么样】
+  "代码更短 + 性能更好 + 更安全"三者同时满足。
+  比如第 3 步把两次查询合并成一次：
+    原来 5 行 → 现在 2 行
+    原来 2 次 DB 往返 → 现在 1 次
+    原来有并发窗口 → 现在没有
+
+
+################################################################################
+  四、完成度记录（自己往后追加）
+################################################################################
+
+  日期        变动                                    完成度
+  ------------------------------------------------------------------
+  2026-09-22  初始盘点                                 7/9 官方步骤
+  2026-09-22  实测发现 8 处代码问题                    ★ 新增 P0/P1
+  ------------------------------------------------------------------
+  ________    ______________________________________  ________
+
+================================================================================
+                              文件结束
+================================================================================

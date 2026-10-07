@@ -1,0 +1,315 @@
+================================================================================
+【项目笔记 · 07】数据访问
+================================================================================
+  对应知识笔记：docs/知识笔记/07-数据访问.txt
+  相关代码：repository/*.java、entity/*.java、NovelServiceIml
+
+
+################################################################################
+  一、现状盘点
+################################################################################
+
+【完成度】5/20  ■■□□□□□□  25%（2026-09-27 更新）
+  官方 8 步走了 2 步（索引、分页），加 3 项扩展实践
+  （Specification 动态查询、EXPLAIN 实测、B+ 树原理）
+
+  ------------------------------------------------------------------
+  步骤   内容                        状态    说明
+  ------------------------------------------------------------------
+  01     引入 MyBatis-Plus            □      仍用 Spring Data JPA
+  02     User 模块重写                □
+  03     Novel/Chapter 模块重写       □
+  04     给常用查询加索引             ✓      已完成
+  05     手写复杂 SQL                 □
+  06     分页插件                     ✓      JPA Pageable（不是 MP 插件）
+  07     理解 N+1 问题                △      ★ 已规避但没系统学过
+  08     Druid 连接池 + SQL 监控      □      当前用默认 HikariCP
+  ------------------------------------------------------------------
+
+【已具备的能力（虽然没走官方清单）】
+
+  ✓ 分页查询：PageRequest.of(page-1, size, Sort.by("lastUpdateTime").descending())
+  ✓ 三种查询方式：
+      · 继承自带      save() / findById() / findAll()
+      · 方法名推导    findByNovelIdOrderByChapterNumberAsc()
+      · 自定义        deleteByNovelId()
+  ✓ N+1 规避：排行榜里用 findAllById 批量查 + Map 组装
+  ✓ 自动时间戳：@PrePersist / @PreUpdate 自动填 createTime / lastUpdateTime
+
+【★ 索引现状（2026-09-27 实测）】
+
+  ------------------------------------------------------------------
+  表        索引                                        状态
+  ------------------------------------------------------------------
+  user      PRIMARY + username(unique)                 ✅ 正常
+  ------------------------------------------------------------------
+  novel     PRIMARY (id)                               ✅ 3 个
+            idx_novel_last_update_time (last_update_time)
+            idx_novel_category_last_update_time
+                (category, last_update_time)
+  ------------------------------------------------------------------
+  chapter   PRIMARY (id)                               ✅ 正常
+            idx_chapter_novel_number (novel_id, chapter_number)
+  ------------------------------------------------------------------
+
+  ★ 关键差异：novel 和 chapter 的索引用 @Table(indexes=...) 写在实体里，
+    重建表时 Hibernate 会自动创建，不会再丢。
+    详见下方 P0（已完成）。
+
+【★ 实测优化效果（10 万条测试数据下）】
+
+  ------------------------------------------------------------------
+  查询                              优化前      优化后     提升
+  ------------------------------------------------------------------
+  小说列表 ORDER BY last_update      136~210ms   0.1~0.6ms   约 300 倍
+  章节目录 WHERE novel_id + 排序     423ms       4ms         约 100 倍
+  ------------------------------------------------------------------
+
+  【执行计划对比】
+    优化前：type=ALL + Table scan 100010 行 + Using filesort
+    优化后：type=index + Backward index scan（小说列表）
+            type=ref + 无 filesort（章节目录）
+
+  ★ 这两个数字就是简历和面试的弹药，详见下方"面试话术"。
+
+【其他认知缺口（部分已补）】
+
+  ------------------------------------------------------------------
+  缺口                          状态
+  ------------------------------------------------------------------
+  没看过 EXPLAIN 执行计划       ✅ 已补（type/key/rows/Extra 四列）
+  没系统学过 B+ 树索引原理      ✅ 已补（3 层树 ≈ 2000 万行）
+  不清楚回表 / 覆盖索引         ✅ 已补
+  没配置慢 SQL 监控             ❌ 仍未做
+  不知道深分页问题              ✅ 已知，未实践
+
+
+################################################################################
+  二、待办清单
+################################################################################
+
+--------------------------------------------------------------------------------
+P0 · 必须做
+--------------------------------------------------------------------------------
+
+  ✅ 已完成：novel 表加索引（2026-09）
+    做法：不用手写 SQL，在实体上用注解声明 —— 重建表会自动创建
+      @Table(name = "novel", indexes = {
+          @Index(name = "idx_novel_last_update_time",
+                 columnList = "lastUpdateTime"),
+          @Index(name = "idx_novel_category_last_update_time",
+                 columnList = "category,lastUpdateTime")
+      })
+    ★ Hibernate 会自动把 Java 属性名 lastUpdateTime 翻译成列名 last_update_time
+    ★ 为什么联合索引 (category, last_update_time)：
+      等值查询列在左、排序列在右，一个索引同时完成"筛选 + 排序"
+    ★ 为什么 idx_novel_last_update_time 不能删：
+      最左前缀 —— 不带 category 条件的纯列表查询用不上联合索引
+
+  ✅ 已完成：用 EXPLAIN 验证
+      EXPLAIN SELECT * FROM novel ORDER BY last_update_time DESC LIMIT 10;
+      → type=index, key=idx_novel_last_update_time, Extra=Backward index scan
+      EXPLAIN SELECT * FROM chapter WHERE novel_id = 1 ORDER BY chapter_number;
+      → type=ref, key=idx_chapter_novel_number, Extra 为空（无 filesort）
+    ★ 注意：数据量小（几十行）时优化器会忽略索引显示 ALL，这是正常的
+
+  ✅ 已完成：Chapter 补 @Table(indexes=...) 声明
+    问题：novel 的索引写在注解里，重建表会自动创建；chapter 没写，
+          表一重建索引就丢了（曾只剩 PRIMARY）。
+    做法：Chapter.java 已声明（实际索引名 idx_chapter_novel_number）
+      @Table(name = "chapter", indexes = {
+          @Index(name = "idx_chapter_novel_number",
+                 columnList = "novelId,chapterNumber")
+      })
+    ★ 只建一个联合索引就够了 —— 最左前缀已覆盖单查 novelId 的场景，
+      再建单列索引是冗余的。
+    验证：重启后 SHOW INDEX FROM chapter; 应看到 2 行（PRIMARY + 联合索引）
+
+--------------------------------------------------------------------------------
+P1 · 应该做
+--------------------------------------------------------------------------------
+
+  ✅ 已完成：列表接口加防御
+    位置：NovelController.list()
+    改动（已落地）：
+      if (page < 1) page = 1;
+      if (size < 1) size = 1;
+      if (size > 100) size = 100;
+    理由：size 不限制的话，传 99999 会真去查。
+
+  □ 列表 keyword 加 trim（防御部分已完成，只剩这一项）
+    位置：NovelSpecifications.titleContains()
+    改动：
+      cb.like(root.get("title"), "%" + keyword.trim() + "%")
+    理由：keyword 不 trim 的话，输入 " 剑 " 会匹配不到"剑来"
+          （★ 但纯空格是安全的，因为 StringUtils.hasText(" ") 返回 false）
+
+  □ 写一份「JPA vs MyBatis-Plus 选型对比」笔记
+    ★ 这直接就是面试答案，投入产出比极高。
+      要点：设计哲学、复杂查询友好度、SQL 可控性、国内流行度、适用场景。
+      结论要落在"取决于场景"而不是"哪个更好"。
+
+  □ 引入 MyBatis-Plus，只重写一个复杂查询做对比
+    ★ 不要动存量代码，新建一个查询接口即可。
+      比如"小说详情 + 章节数统计"，一条 JOIN SQL 搞定。
+      现在用 JPA 要写两次查询。
+
+  □ 引入 Druid 连接池 + 开启 SQL 监控页面
+    好处：能看到每条 SQL 的执行次数、平均耗时、慢 SQL 排行。
+    ★ 和第 12 大类（可观测性）的慢 SQL 监控是同一件事。
+
+  □ 检查全项目有没有 N+1
+    方法：开 spring.jpa.show-sql=true，看日志里有没有循环执行的 SQL。
+    ★ 你的排行榜已经规避了，但详情页的 findDetail 里
+      查章节列表是一次性查的，也没问题。基本安全。
+
+--------------------------------------------------------------------------------
+P2 · 可以做
+--------------------------------------------------------------------------------
+
+  □ 手写一条多表 JOIN SQL
+    练习：小说详情 + 章节数统计
+      SELECT n.id, n.title, n.summary, COUNT(c.id) AS chapter_count
+      FROM novel n LEFT JOIN chapter c ON n.id = c.novel_id
+      WHERE n.id = ? GROUP BY n.id;
+    ★ 用 LEFT JOIN 而不是 INNER JOIN（否则没章节的小说查不到）
+
+  □ 学习深分页优化
+    问题：LIMIT 1000000, 10 会先扫 1000010 行再丢弃前 1000000 行。
+    方案：游标分页 WHERE id > #{lastId} ORDER BY id LIMIT 10
+
+  □ 了解 MySQL 的锁与事务隔离级别
+    ★ 这是另一个大类的内容，建议单独开包（可归入"数据访问"或新开"数据库原理"）
+
+  □ 给 novel 表的 title 加索引（如果做搜索功能）
+    ★ 注意 LIKE '%kw%' 用不上索引，需要全文索引或 ES。
+
+
+################################################################################
+  三、关键实现速查
+################################################################################
+
+【现有 Repository】
+  UserRepository
+    Optional<User> findByUsername(String username)
+
+  NovelRepository
+    继承 JpaRepository<Novel, Integer>
+       + JpaSpecificationExecutor<Novel>              ← 2026-09 新增
+    @Query("SELECT DISTINCT n.category FROM Novel n ORDER BY n.category")
+    List<String> findDistinctCategories()             ← 2026-09 新增
+
+  ChapterRepository
+    List<Chapter> findByNovelIdOrderByChapterNumberAsc(Integer novelId)
+    void deleteByNovelId(Integer novelId)
+
+【★ 动态查询 Specification（2026-09 新增）】
+  位置：repository/NovelSpecifications.java（新建文件）
+  用途：小说列表的搜索 + 分类筛选 + 状态筛选
+
+  三个条件方法（条件为空时返回 null）：
+    titleContains(keyword)      → cb.like(title, "%keyword%")
+    categoryEquals(category)    → cb.equal(category, category)
+    statusEquals(status)        → cb.equal(status, status)
+
+  组装（NovelServiceIml.java:193）：
+    Specification<Novel> spec = Specification.allOf(
+            NovelSpecifications.categoryEquals(category),
+            NovelSpecifications.statusEquals(status),
+            NovelSpecifications.titleContains(keyword)
+    );
+    return novelRepository.findAll(spec, pageable);
+
+  ★ 核心技巧：返回 null 的 Specification 会被 Spring Data 自动忽略，
+    所以不需要写一堆 if (keyword != null) 来判断
+  ★ 工具类加了私有构造器，防止被实例化
+  ★ 参数顺序在 Controller / Service / Specification 三处必须一致
+    （当前顺序：page, size, category, status, keyword）
+
+  接口：
+    GET /novels?page=1&size=8&category=玄幻&status=FINISHED&keyword=剑
+    GET /novels/categories   → ["玄幻","都市",...]
+
+【实体关系】
+  Novel 1 ──── N Chapter
+  用 chapter.novel_id 手动关联，未用 JPA 的 @OneToMany
+  ★ 原因：避免查小说时把全部章节正文一起加载出来
+
+【冗余字段】
+  novel.total_words
+  维护点：addChapter(+wordCount) / updateChapter(+diff) / deleteChapter(-wordCount)
+  ★ 三处都要维护，漏一处数据就不一致
+
+【自动时间戳】
+  Novel：@PrePersist 填 lastUpdateTime + @PreUpdate 更新 lastUpdateTime
+  Chapter：@PrePersist 填 createTime
+
+【数据库配置】
+  dev：ddl-auto=update + show-sql=true
+  prod：ddl-auto=validate + show-sql=false
+  ★ prod 用 validate 意味着改表结构要走 Flyway，但项目里还没引入 Flyway
+
+
+################################################################################
+  四、面试话术（可直接背）
+################################################################################
+
+【Q：你项目做过 SQL 优化吗？】
+  "做过。小说列表接口原本是全表扫描加 filesort，
+   我先造了 10 万条测试数据复现，用 EXPLAIN 看到 type=ALL、
+   Extra=Using filesort，实测 136~210ms。
+
+   分析后发现两个问题：
+   novel 表按 last_update_time 排序但没有索引；
+   chapter 表按 novel_id 查询并排序 chapter_number，也没有索引。
+
+   我给 novel 加了 last_update_time 的单列索引，
+   又加了一个 (category, last_update_time) 联合索引 ——
+   因为分类筛选的查询是 WHERE category=? ORDER BY last_update_time，
+   等值列放左边、排序列放右边，一个索引同时完成筛选和排序。
+   单列索引不能删，因为不带分类的纯列表查询用不上联合索引（最左前缀）。
+
+   优化后 type 变成 index + Backward index scan，filesort 消失，
+   小说列表从 136ms 降到 0.1ms，章节目录从 423ms 降到 4ms。"
+
+【Q：索引怎么维护的？】
+  "我没有手写 CREATE INDEX，而是在实体上用 @Table(indexes=...) 声明。
+   好处是索引定义跟着代码走，换台机器或者重建表会自动创建，
+   不会出现'本地有索引、服务器上忘了建'的情况。"
+
+【Q：为什么不直接写 SQL 查？】
+  "列表要支持搜索、分类、状态三个可选条件，
+   组合起来有 8 种情况。如果用方法名推导要写 8 个方法，
+   用 @Query 拼 null 判断又不好维护。
+   所以我用了 JpaSpecificationExecutor + Specification，
+   每个条件一个独立方法，条件为空就返回 null 被自动忽略，
+   以后再加筛选维度也不用改结构。"
+
+【Q：搜索为什么不用索引？】
+  "搜索用的是 LIKE '%关键词%'，
+   用 EXPLAIN 验证过是 type=ALL 全表扫描 ——
+   因为以 % 开头的 LIKE 无法利用 B+ 树的有序性。
+   20 万数据下约 200ms 还能接受，
+   但如果数据量再涨一个数量级，就要上全文索引或者 Elasticsearch。"
+
+
+################################################################################
+  五、完成度记录（自己往后追加）
+################################################################################
+
+  日期        变动                                    完成度
+  ------------------------------------------------------------------
+  2026-09-22  初始盘点                                 0/8 官方清单
+  2026-09-22  列出三张表缺索引清单                     ★ 新增 P0
+  2026-09-27  novel 表索引完成（@Table 注解声明）       5/20  (25%)
+  2026-09-27  10 万数据实测：列表 136ms→0.1ms，
+              目录 423ms→4ms
+  2026-09-27  新增 Specification 动态查询
+              （搜索 + 分类 + 状态）
+  2026-09-27  发现 chapter 索引在重建表后丢失          ★ 新增 P0
+  ------------------------------------------------------------------
+  ________    ______________________________________  ________
+
+================================================================================
+                              文件结束
+================================================================================

@@ -1,0 +1,185 @@
+================================================================================
+【项目笔记 · 02】工程化基建
+================================================================================
+  对应知识笔记：docs/知识笔记/02-工程化基建.txt
+  相关代码：common/、config/、src/main/resources/、pom.xml、Dockerfile
+
+
+################################################################################
+  一、现状盘点
+################################################################################
+
+【完成度】14/14  ■■■■■■■■  100%  （14 课全部落地）
+
+  ------------------------------------------------------------------
+  课次   内容                    状态    代码位置
+  ------------------------------------------------------------------
+  01     Service 层抽离          ✓      INovelService + NovelServiceIml
+  02     统一返回格式            ✓      common/Result.java
+  03     全局异常处理            ✓      common/GlobalExceptionHandler.java
+  04     Lombok 引入             ✓      @Data/@Slf4j/@RequiredArgsConstructor
+  05     参数校验                ✓      dto/*.java + @Valid
+  06     DTO 分离                ✓      dto/ 与 vo/ 分离
+  07     后端搜索                ✓      JpaSpecificationExecutor 动态查询
+  08     分页查询                ✓      findPage 用 PageRequest
+  09     事务控制                ✓      @Transactional(rollbackFor=...)
+  10     日志规范                ✓      @Slf4j + logback 配置文件
+  11     单元测试                ✓      3 个测试类 12 例全部通过
+  12     API 文档                ✓      Knife4j @Tag/@Operation
+  13     多环境配置              ✓      application-dev/prod.properties
+  14     Docker 打包             ✓      Dockerfile + docker-compose.yml
+  ------------------------------------------------------------------
+
+【亮点（面试可以主动讲）】
+
+  ✓ Result<T> 泛型信封 + 静态工厂方法，前端只需解析一种结构
+  ✓ GlobalExceptionHandler 按异常类型分流（业务 warn / 系统 error 带堆栈）
+  ✓ 参数校验三层防护（前端 / @Valid / 数据库 NOT NULL）
+  ✓ DTO 隔离，前端碰不到 Entity，防越权赋值
+  ✓ @Transactional(rollbackFor = Exception.class) 显式声明，比默认更严格
+  ✓ 多环境彻底分离：dev 连本地 + show-sql，prod validate + 关文档 + 环境变量注入密码
+  ✓ Docker 两阶段构建，运行镜像不含 JDK 和源码
+
+【✅ 已解决：Maven 命令行构建失败（2026-09-27）】
+
+  【当时的现象】
+    ./mvnw clean compile   →  409 行 ERROR，全是"找不到符号 getTitle()/log"
+
+  【根因（两层）】
+    第一层：JDK 版本
+      · 本机 Maven 用的是 JDK 23，pom 里 <java.version>21</java.version>
+        只是源码级别，不是 JDK 版本
+      · JDK 23 起，javac 默认不再自动运行 classpath 上的注解处理器
+      · 结果 Lombok 完全没生效，所有 getter/setter/log 都没生成
+      · 为什么 IDEA 里没事：IDEA 有自己的编译配置（Lombok 插件 +
+        注解处理开关），但命令行 mvn package 一定失败
+
+    第二层（升级 JDK 25 后暴露的）：
+      · 把 JDK 升到 25、pom 改成 java.version=25 之后，又报
+        ExceptionInInitializerError: com.sun.tools.javac.code.TypeTag :: UNKNOWN
+      · 这是 Lombok 不兼容当前 JDK 的典型报错
+      · 当时 pom 里写了 <lombok.version>1.18.36</lombok.version> ——
+        这个版本只支持到 JDK 24，不支持 25
+
+  【最终修复（三处一起改才生效）】
+    ① pom.xml 加 maven-compiler-plugin 的 annotationProcessorPaths
+       <plugin>
+         <groupId>org.apache.maven.plugins</groupId>
+         <artifactId>maven-compiler-plugin</artifactId>
+         <configuration>
+           <proc>full</proc>
+           <annotationProcessorPaths>
+             <path>
+               <groupId>org.projectlombok</groupId>
+               <artifactId>lombok</artifactId>
+               <version>${lombok.version}</version>
+             </path>
+           </annotationProcessorPaths>
+         </configuration>
+       </plugin>
+
+    ② lombok.version 用 1.18.46（Spring Boot 4.1 管理的版本）
+       ★ 不要手写更低的版本！1.18.36 不支持 JDK 25。
+         最省事的做法是**不写这一行**，让 Spring Boot 的 BOM 管理。
+
+    ③ 本机 JDK 升到 25，并确认 JAVA_HOME 生效
+       ★ Windows 的环境变量修改不会传播到已运行的进程，
+         改完要重启终端 / IDEA / IDE。
+
+  【验证】
+    ./mvnw clean compile   →  BUILD SUCCESS ✓
+    （JDK 25 编译时有 Lombok 的 sun.misc.Unsafe 弃用警告，无害）
+
+  ★ 实测确认：JDK 25 下编译、打包、启动全部正常
+    Started Demo2Application in 5.5 seconds
+
+  【★ 教训】
+    "IDEA 能跑 ≠ 命令行能跑"。两套编译器用不同的配置。
+    养成习惯：提交前跑一次 ./mvnw clean package。
+
+
+################################################################################
+  二、待办清单
+################################################################################
+
+--------------------------------------------------------------------------------
+P0 · 必须做
+--------------------------------------------------------------------------------
+
+  ✅ 已完成：修复 Maven 构建（2026-09-27）
+    做法：pom 加 annotationProcessorPaths + lombok 1.18.46 + 本机 JDK 升到 25
+    验证：./mvnw clean compile → BUILD SUCCESS
+    详见上方章节。
+
+--------------------------------------------------------------------------------
+P1 · 应该做
+--------------------------------------------------------------------------------
+
+  □ 补齐 .dockerignore
+    问题：COPY src ./src 会把 src/test 也复制进构建阶段，浪费时间。
+    修法：新建 .dockerignore，排除 .git / target / logs / uploads / .idea
+
+  □ 容器非 root 用户运行
+    修法：Dockerfile 里创建 appuser 并 USER appuser
+
+  □ 加 HEALTHCHECK 指令
+    修法：HEALTHCHECK CMD curl -f http://localhost:80/actuator/health || exit 1
+          （依赖 Actuator，见项目笔记/12-可观测性.txt）
+
+--------------------------------------------------------------------------------
+P2 · 可以做（第 15-18 课）
+--------------------------------------------------------------------------------
+
+  □ 第15课：接口版本管理 /v1/novels
+  □ 第16课：全局请求日志切面（记录耗时、入参、出参）
+            ★ 和 12-可观测性 的接口耗时切面是同一件事，做一次两处打勾
+  □ 第18课：配置类彻底清除硬编码
+            现状：CorsConfig 里 localhost:5173 还写死着
+
+  □ 加 .editorconfig 或 IDEA 代码风格配置，统一格式
+
+
+################################################################################
+  三、配置速查
+################################################################################
+
+【三套配置的差异】
+  ------------------------------------------------------------------
+  配置项                dev                      prod
+  ------------------------------------------------------------------
+  数据库地址            localhost:3306           ${DB_URL}
+  数据库密码            123456                   ${DB_PASSWORD}
+  ddl-auto              update                   validate
+  show-sql              true                     false
+  日志级别              INFO                     WARN
+  日志路径              logs/book-manager.log    /var/log/book-manager/app.log
+  knife4j.enable        true                     false
+  server.port           8080（默认）             80
+  file.base-url         http://localhost:8080    https://your-domain.com
+  ------------------------------------------------------------------
+
+【拦截器白名单（WebConfig）】
+  /users/login、/users/register、/users/refresh
+  /swagger-ui/**、/swagger-ui.html、/v3/api-docs/**、doc.html
+  /error、/、/index.html、/*.html、/favicon.ico
+  /uploads/**
+
+【Docker 端口映射】
+  docker-compose.yml：宿主机 8081 → 容器 80（因为 prod 里 server.port=80）
+  MySQL：宿主机 3307 → 容器 3306
+
+
+################################################################################
+  四、完成度记录（自己往后追加）
+################################################################################
+
+  日期        变动                                    完成度
+  ------------------------------------------------------------------
+  2026-09-22  初始盘点                                 13/14 (93%)
+  2026-09-22  发现 Maven 构建阻塞（JDK23+Lombok）       ★ 新增 P0
+  ------------------------------------------------------------------
+  ________    ______________________________________  ________
+
+================================================================================
+                              文件结束
+================================================================================

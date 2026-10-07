@@ -1,0 +1,269 @@
+================================================================================
+【项目笔记 · 12】可观测性
+================================================================================
+  对应知识笔记：docs/知识笔记/12-可观测性.txt
+  相关代码：common/GlobalExceptionHandler.java、config/LoginInterceptor.java、
+            src/main/resources/application-*.properties
+
+
+################################################################################
+  一、现状盘点
+################################################################################
+
+【完成度】0/7  □□□□□□□□
+【状态】只有基础的 log.info，没有任何监控体系
+
+【已经做到的（比想象中多）】
+
+  ✓ 用 @Slf4j + log 对象，不用 System.out.println
+  ✓ 占位符写法 log.info("发布章节: novelId={}, title={}", novelId, title)
+  ✓ 关键业务节点有日志：
+      · 注册用户           UserService.register
+      · 发布章节           NovelServiceIml.addChapter
+      · 删除小说           NovelServiceIml.deleteNovel
+      · 文件上传成功       FileController.upload
+      · 文件上传失败       FileController.upload
+      · 用户登出           UserController.logout
+  ✓ 日志分级基本正确：
+      · 业务异常 → warn（GlobalExceptionHandler）
+      · 参数校验失败 → warn
+      · 限流触发 → warn
+      · 文件上传失败 → error（带堆栈）
+  ✓ 日志文件配置 + 滚动策略：
+      dev：logs/book-manager.log
+      prod：/var/log/book-manager/app.log + 50MB × 30 天
+
+【★ 缺口 1：兜底异常用了 warn 而不是 error】
+
+  位置：common/GlobalExceptionHandler.java
+    @ExceptionHandler(Exception.class)
+    public Result<Void> Exception(Exception e){
+        log.warn("最后的异常处理器:", e);        // ← 应该是 error
+        return Result.error("系统繁忙，请稍后再试");
+    }
+
+  理由：兜底处理器是"不该发生的事发生了"，属于系统故障，
+        应该是 error 级别，否则告警规则里会漏掉。
+  ★ 小问题：方法名 Exception(Exception e) 用类名做方法名，不规范，建议改成 handleException
+
+【★ 缺口 2：LoginInterceptor 里的空 catch】
+
+  位置：config/LoginInterceptor.java
+    } catch (Exception e) {
+        // Token 无效，什么也不做（不打印错误，保持日志干净）
+    }
+
+  问题：注释说"保持日志干净"，但这样连"有人用伪造 token 攻击"都发现不了。
+        如果短时间内大量 token 解析失败，这是明显的攻击信号。
+
+  修法：log.debug("Token 解析失败: {}", e.getMessage());
+        更好的做法是加一个计数器，异常量突增时告警。
+
+【★ 缺口 3：没有 traceId】
+
+  问题场景：
+    并发 100 个请求时，日志文件里是这样的：
+      10:00:01 INFO  发布章节: novelId=1
+      10:00:01 INFO  用户登录: username=alice
+      10:00:01 INFO  发布章节: novelId=2
+      10:00:01 ERROR 空指针异常
+    ↑ 根本不知道这个 ERROR 是哪个请求产生的
+
+  修法：MDC + Filter，原理和 UserContext 的 ThreadLocal 一模一样。
+
+【★ 缺口 4：没有接口耗时监控】
+
+  现状：不知道哪个接口慢。
+  修法：一个 AOP 切面，20 行代码。
+
+【★ 缺口 5：没有健康检查】
+
+  现状：不知道数据库/Redis 是否正常。
+  修法：引入 Actuator，访问 /actuator/health。
+
+【★ 缺口 6：没有慢 SQL 监控】
+
+  现状：dev 环境开了 show-sql，但看不到真实耗时，prod 完全关闭。
+
+【★ 缺口 7：日志脱敏未检查】
+
+  待检查：
+    · 有没有 log.info("user={}", user) （@Data 的 toString 包含 passwordHash）
+    · 有没有 log.info("token={}", token) （完整 token 泄露）
+
+
+################################################################################
+  二、待办清单
+################################################################################
+
+--------------------------------------------------------------------------------
+P1 · 应该做（投入产出比最高的三步）
+--------------------------------------------------------------------------------
+
+  □ 第1步：规范日志分级（10 分钟）
+    位置：common/GlobalExceptionHandler.java
+    改动：
+      · 兜底异常 log.warn → log.error
+      · 方法名 Exception(Exception e) → handleException(Exception e)
+
+    位置：config/LoginInterceptor.java
+    改动：空 catch 里加 log.debug("Token 解析失败: {}", e.getMessage())
+
+  □ 第2步：★ traceId 贯穿请求（30 分钟）—— 最实用的一步
+    原理：MDC（Mapped Diagnostic Context），本质就是 ThreadLocal
+
+    做法：
+      ① 新建 common/TraceIdFilter.java：
+         @Component
+         @Order(Ordered.HIGHEST_PRECEDENCE)
+         public class TraceIdFilter implements Filter {
+             @Override
+             public void doFilter(ServletRequest req, ServletResponse res,
+                                  FilterChain chain) throws IOException, ServletException {
+                 try {
+                     String traceId = UUID.randomUUID().toString()
+                             .replace("-", "").substring(0, 8);
+                     MDC.put("traceId", traceId);
+                     chain.doFilter(req, res);
+                 } finally {
+                     MDC.clear();          // ★ 必须清理，和 ThreadLocal 同理
+                 }
+             }
+         }
+
+      ② logback 配置里加 pattern：
+         %d{HH:mm:ss} [%X{traceId}] %-5level %logger{36} - %msg%n
+
+      ③ 验证：连续调几个接口，日志里应该每行都带 traceId
+
+    ★ 加分项：如果前端传了 traceId（Header），就用前端的；
+      否则自己生成。这样前后端日志能串起来。
+
+  □ 第3步：★ 接口耗时切面（20 行代码）
+    做法：新建 common/ApiCostAspect.java
+
+      @Aspect
+      @Component
+      @Slf4j
+      public class ApiCostAspect {
+          @Around("execution(* com.example2.demo2.controller..*.*(..))")
+          public Object recordCost(ProceedingJoinPoint point) throws Throwable {
+              long start = System.currentTimeMillis();
+              String method = point.getSignature().toShortString();
+              try {
+                  Object result = point.proceed();
+                  long cost = System.currentTimeMillis() - start;
+                  if (cost > 500) {
+                      log.warn("慢接口: {} 耗时 {}ms", method, cost);
+                  } else {
+                      log.info("接口: {} 耗时 {}ms", method, cost);
+                  }
+                  return result;
+              } catch (Throwable e) {
+                  log.error("接口异常: {} 耗时 {}ms", method,
+                            System.currentTimeMillis() - start, e);
+                  throw e;
+              }
+          }
+      }
+
+    ★ 就这么点代码，面试时就能说"我做过接口性能监控"。
+    ★ 跑起来后，去看看到底哪个接口最慢 —— 很可能是排行榜。
+
+--------------------------------------------------------------------------------
+P2 · 可以做
+--------------------------------------------------------------------------------
+
+  □ 第4步：接入 Actuator（健康检查）
+    ① 加依赖 spring-boot-starter-actuator
+    ② 配置：
+       management.endpoints.web.exposure.include=health,info
+       management.endpoint.health.show-details=always
+    ③ 访问 http://localhost:8080/actuator/health
+       应该能看到 db 和 redis 都是 UP
+    ★ 安全提醒：生产环境只暴露 health，
+      严禁暴露 env / beans / heapdump（会泄露配置和密码）
+
+  □ 第5步：慢 SQL 监控
+    方式一：开 MySQL 慢查询日志（slow_query_log=1, long_query_time=1）
+    方式二：引入 Druid，访问 /druid/index.html 看 SQL 监控
+            ★ 和项目笔记/07-数据访问.txt 的 P1 是同一件事
+    方式三：用 EXPLAIN 手动分析你的小说列表和章节目录查询
+
+  □ 第6步：JVM 基础监控
+    · 用 jps / jstat / jstack / jmap 各跑一次
+    · 学会"CPU 100% 怎么排查"的完整流程：
+        top -Hp <pid> → printf "%x" 转十六进制 → jstack | grep
+    · 用 VisualVM 看一眼你项目的堆内存
+
+  □ 第7步：Arthas 实战
+    · 本地启动项目 + Arthas
+    · 用 trace 追一次 findRanking，看是 Redis 慢还是数据库慢
+    · 用 watch 看一次 addChapter 的入参
+    ★ 这是真的"用过"，面试可以讲。
+
+--------------------------------------------------------------------------------
+P3 · 锦上添花
+--------------------------------------------------------------------------------
+
+  □ Micrometer + Prometheus + Grafana
+  □ 自定义业务指标（每天发布多少章节）
+  □ 异步日志（AsyncAppender，提升高并发下的性能）
+  □ ELK 日志聚合
+  □ 告警规则（错误率 > 1% 通知）
+
+
+################################################################################
+  三、快速见效的优先级建议
+################################################################################
+
+  ------------------------------------------------------------------
+  优先级  做什么                  耗时      收益
+  ------------------------------------------------------------------
+  1      日志分级修正            10 分钟   立即消除日志噪音
+  2      traceId                 30 分钟   ★ 排查效率质变
+  3      接口耗时切面            20 分钟   ★ 面试可讲
+  4      Actuator 健康检查       15 分钟   一眼看出依赖是否正常
+  5      慢 SQL 监控             30 分钟   定位性能瓶颈
+  ------------------------------------------------------------------
+
+  ★ 前三步加起来不到 1 小时，但能让你的项目从
+    "只有 log.info" 变成"有链路、有监控"。
+
+
+################################################################################
+  四、面试话术准备
+################################################################################
+
+【Q：你项目怎么做日志的？】
+  "用 @Slf4j + 占位符 + 分级。
+   业务异常用 warn 不带堆栈，系统异常用 error 带堆栈。
+   日志文件配了滚动策略，单文件 50MB、保留 30 天。
+   另外加了 traceId 贯穿一次请求，用 MDC 实现的，
+   原理和 ThreadLocal 一样，在 Filter 的 finally 里清理。
+   这样排查问题时可以 grep 一个 traceId 看到完整的调用链路。"
+
+【Q：线上接口变慢了怎么排查？】
+  "先用我写的接口耗时切面定位是哪个接口慢，
+   再用 traceId 找到这个请求的完整日志，
+   如果是 SQL 慢就用 EXPLAIN 看执行计划，或者用 Arthas 的 trace 命令
+   追到具体是哪一行慢。
+   常见原因有：没走索引、N+1 查询、外部调用阻塞、GC 频繁。"
+
+  ★ 要等真的做了这些才能这么讲。
+
+
+################################################################################
+  五、完成度记录（自己往后追加）
+################################################################################
+
+  日期        变动                                    完成度
+  ------------------------------------------------------------------
+  2026-09-22  初始盘点                                 0/7
+  2026-09-22  列出 7 处缺口 + 3 步快速见效方案         —
+  ------------------------------------------------------------------
+  ________    ______________________________________  ________
+
+================================================================================
+                              文件结束
+================================================================================

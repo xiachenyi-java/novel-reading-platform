@@ -1,0 +1,656 @@
+================================================================================
+【大类 11】测试体系
+================================================================================
+  对应项目笔记：docs/项目笔记/11-测试体系.txt
+
+【定位】回答"你怎么证明它是对的"。
+        ★ 性价比最高的一个能力项 —— 从 0 到 1 投入极小，观感提升巨大。
+
+
+################################################################################
+  一、测试分层
+################################################################################
+
+【测试金字塔】
+                    ▲
+                   ╱ ╲         E2E 测试（少）
+                  ╱   ╲        慢、脆弱、成本高
+                 ╱─────╲
+                ╱       ╲      集成测试（中）
+               ╱         ╲     启动容器、连数据库
+              ╱───────────╲
+             ╱             ╲   单元测试（多）★
+            ╱               ╲  快、稳定、成本低
+           ╱─────────────────╲
+
+  ★ 原则：多写单元测试，少写 E2E。
+
+【四种测试对比】
+  ------------------------------------------------------------------
+  类型          工具                     启动容器  耗时    测什么
+  ------------------------------------------------------------------
+  纯单元测试    JUnit + Mockito          否        毫秒    Service 业务逻辑
+  切片测试      @WebMvcTest/@DataJpaTest 部分      秒级    单层
+  集成测试      @SpringBootTest          是        数秒    完整链路
+  端到端 E2E    Selenium/Playwright      否        分钟    UI 全流程
+  ------------------------------------------------------------------
+
+【★ 什么代码值得测】
+  ------------------------------------------------------------------
+  值得测 ✓                          不值得测 ✗
+  ------------------------------------------------------------------
+  业务逻辑（计算、状态流转）         Getter / Setter
+  边界条件（空值、极值、越界）       纯 DTO 定义
+  异常分支（不存在、无权限）         框架自带功能
+  算法（排序、聚合）                 简单的一行委托调用
+  安全逻辑（401 / 403 / 越权）      配置文件
+  ------------------------------------------------------------------
+
+
+################################################################################
+  二、JUnit 5
+################################################################################
+
+【★ 生命周期注解】
+  ------------------------------------------------------------------
+  注解            执行时机                      用途
+  ------------------------------------------------------------------
+  @BeforeAll      所有测试前执行一次（static）  初始化昂贵资源
+  @BeforeEach     每个测试前执行                准备测试数据
+  @AfterEach      每个测试后执行                清理
+  @AfterAll       所有测试后执行一次（static）  释放资源
+  @Test           标记测试方法                  —
+  @DisplayName    给测试起可读的名字            ★ 推荐
+  @Disabled       跳过这个测试                  —
+  @Timeout        超时自动失败                  —
+  @Nested         嵌套组织测试                  ★ 推荐
+  ------------------------------------------------------------------
+
+  执行顺序：
+    @BeforeAll → [@BeforeEach → @Test → @AfterEach] × N → @AfterAll
+
+【★ 断言：JUnit 原生 vs AssertJ】
+
+  // JUnit 原生
+  assertEquals("剑来", novel.getTitle());
+  assertNotNull(novel.getId());
+  assertTrue(novel.getTotalWords() > 0);
+  assertThrows(BusinessException.class, () -> service.findDetail(99999));
+
+  // AssertJ（★ 推荐，链式调用 + 更好的报错信息）
+  import static org.assertj.core.api.Assertions.*;
+
+  assertThat(novel.getTitle()).isEqualTo("剑来");
+  assertThat(novel.getId()).isNotNull().isPositive();
+  assertThat(novel.getTotalWords()).isGreaterThan(0);
+  assertThatThrownBy(() -> service.findDetail(99999))
+          .isInstanceOf(BusinessException.class)
+          .hasMessageContaining("不存在");
+
+  ★ AssertJ 的报错信息会告诉你"期望 X 但实际是 Y"，比 assertEquals 友好得多。
+
+【★ 参数化测试（省代码神器）】
+  @ParameterizedTest
+  @DisplayName("注册时用户名长度校验")
+  @ValueSource(strings = {"", " ", "ab", "a".repeat(21)})
+  void testInvalidUsername(String username) {
+      UserRegisterDTO dto = new UserRegisterDTO();
+      dto.setUsername(username);
+      dto.setPassword("123456");
+      assertThatThrownBy(() -> userService.register(dto))
+              .isInstanceOf(Exception.class);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+      "1, 10, 10",
+      "5, 20, 100",
+      "3, 0, 0"
+  })
+  void testMultiply(int a, int b, int expected) {
+      assertThat(a * b).isEqualTo(expected);
+  }
+
+  【其他数据源】
+    @ValueSource      单值数组
+    @CsvSource        CSV 格式（多参数）
+    @MethodSource     从方法提供数据流
+    @EnumSource       枚举值
+
+【@Nested 组织测试】
+  @DisplayName("NovelService 章节管理")
+  class NovelServiceTest {
+
+      @Nested
+      @DisplayName("发布章节")
+      class AddChapter {
+          @Test
+          @DisplayName("正常发布：字数累加正确")
+          void shouldAccumulateWordCount() { ... }
+
+          @Test
+          @DisplayName("小说不存在：抛 BusinessException")
+          void shouldThrowWhenNovelNotFound() { ... }
+      }
+  }
+
+  ★ 好处：测试报告里按业务分组显示，可读性大幅提升。
+
+【★ 坑】
+  · 测试方法要自给自足，不要依赖其他测试产生的数据
+  · 测试方法不要有执行顺序依赖
+  · 一个测试方法只测一件事（一个概念）
+  · 测试名要描述"期望的行为"而不是"调用了什么方法"
+    差：testAddChapter()
+    好：shouldAccumulateTotalWordsWhenAddChapter()
+
+
+################################################################################
+  三、Mockito 单元测试 ★ 最有价值的部分
+################################################################################
+
+【为什么要 Mock】
+  测 Service 时，它依赖 Repository、Redis 等。
+  不用 Mock 就要启动 Spring + 连数据库 → 慢。
+  用 Mock 可以完全隔离依赖，毫秒级完成。
+
+【★ 核心注解】
+  ------------------------------------------------------------------
+  注解               作用
+  ------------------------------------------------------------------
+  @ExtendWith(MockitoExtension.class)  启用 Mockito
+  @Mock             创建一个假的依赖（所有方法返回默认值）
+  @InjectMocks      自动把上面的 Mock 注入到被测对象
+  @Spy              部分 Mock（真实调用 + 可打桩）
+  @Captor           ArgumentCaptor 的注解形式
+  ------------------------------------------------------------------
+
+【★ 完整示例（Given-When-Then 结构）】
+
+  @ExtendWith(MockitoExtension.class)
+  class NovelServiceTest {
+
+      @Mock
+      private NovelRepository novelRepository;
+
+      @Mock
+      private ChapterRepository chapterRepository;
+
+      @InjectMocks
+      private NovelServiceIml novelService;
+
+      @Test
+      @DisplayName("发布章节：总字数正确累加")
+      void shouldAccumulateWordCount() {
+          // ===== 1. 准备（Given）=====
+          Novel novel = new Novel();
+          novel.setId(1);
+          novel.setTotalWords(1000);
+
+          when(novelRepository.findById(1)).thenReturn(Optional.of(novel));
+          when(chapterRepository.findByNovelIdOrderByChapterNumberAsc(1))
+                  .thenReturn(new ArrayList<>());
+          when(chapterRepository.save(any(Chapter.class)))
+                  .thenAnswer(inv -> inv.getArgument(0));
+
+          ChapterDTO dto = new ChapterDTO();
+          dto.setTitle("第一章");
+          dto.setContent("这是一段正文".repeat(100));
+
+          // ===== 2. 执行（When）=====
+          Chapter result = novelService.addChapter(1, dto);
+
+          // ===== 3. 断言（Then）=====
+          assertThat(result.getChapterNumber()).isEqualTo(1);
+          assertThat(novel.getTotalWords()).isEqualTo(1700);      // ★ 核心断言
+
+          // ===== 4. 验证交互 =====
+          verify(novelRepository).save(novel);
+          verify(chapterRepository).save(any(Chapter.class));
+      }
+  }
+
+  ★ Given-When-Then 结构让测试代码极其清晰。
+
+【Mockito 常用方法】
+  ------------------------------------------------------------------
+  方法                              作用
+  ------------------------------------------------------------------
+  when(mock.method()).thenReturn(v) 打桩：调用时返回 v
+  when(...).thenThrow(exception)    打桩：调用时抛异常
+  when(...).thenAnswer(inv -> ...)  打桩：动态计算返回值
+  doNothing().when(mock).voidMethod()  对 void 方法打桩
+  verify(mock).method()             验证被调用了一次
+  verify(mock, times(2)).method()   验证被调用了 2 次
+  verify(mock, never()).method()    验证从未被调用
+  verifyNoMoreInteractions(mock)    验证没有其他未验证的调用
+  any() / anyInt() / eq()           参数匹配器
+  ArgumentCaptor                    捕获传给 Mock 的参数
+  ------------------------------------------------------------------
+
+【★ ArgumentCaptor：捕获参数做断言】
+  @Test
+  void shouldSaveChapterWithCorrectNovelId() {
+      // ... 准备 ...
+
+      novelService.addChapter(1, dto);
+
+      ArgumentCaptor<Chapter> captor = ArgumentCaptor.forClass(Chapter.class);
+      verify(chapterRepository).save(captor.capture());
+
+      Chapter saved = captor.getValue();
+      assertThat(saved.getNovelId()).isEqualTo(1);      // ★ 验证关联关系
+  }
+
+  ★ 场景：不关心返回值，只想验证"存进去的数据对不对"。
+
+【★ 坑】
+  · Mockito 默认不能 Mock final 类 / 静态方法
+    （Mockito 5+ 内置了 inline mockmaker，可以支持）
+  · ★ @Mock 和 @MockBean 的区别：
+    @Mock      → 纯 Mockito，不涉及 Spring（快）
+    @MockBean  → 替换 Spring 容器里的 Bean（慢，要启动容器）
+  · 不要 Mock 你要测试的类本身
+  · 过度 Mock 会让测试变成"验证实现细节"而不是"验证行为"
+
+
+################################################################################
+  四、Spring Boot 测试
+################################################################################
+
+【四种测试注解对比】
+  ------------------------------------------------------------------
+  注解                加载范围                用途
+  ------------------------------------------------------------------
+  @SpringBootTest     完整容器 + 所有 Bean    集成测试
+  @WebMvcTest         只加载 Web 层           测 Controller
+  @DataJpaTest        只加载 JPA 层           测 Repository
+  @JsonTest           只加载 Jackson          测序列化
+  ------------------------------------------------------------------
+
+  ★ 切片测试比 @SpringBootTest 快得多，因为只加载需要的部分。
+
+【@SpringBootTest 用法】
+  @SpringBootTest
+  @Transactional                    // ★ 测试后自动回滚
+  class NovelServiceIntegrationTest {
+
+      @Autowired
+      private NovelServiceIml novelService;
+
+      @Autowired
+      private NovelRepository novelRepository;
+
+      @Test
+      void shouldPersistNovel() {
+          NovelDTO dto = new NovelDTO();
+          dto.setTitle("测试小说");
+          // ...
+
+          Novel saved = novelService.addNovel(dto);
+
+          assertThat(saved.getId()).isNotNull();
+          assertThat(novelRepository.findById(saved.getId())).isPresent();
+      }
+  }
+
+  ★ @Transactional 让每个测试方法跑在一个事务里，结束后回滚，
+    数据库不会被污染。这是集成测试的标准做法。
+
+【@MockBean：替换容器里的 Bean】
+  @SpringBootTest
+  class UserServiceTest {
+
+      @MockBean
+      private StringRedisTemplate stringRedisTemplate;    // ★ 替换掉真的 Redis
+
+      @Autowired
+      private UserService userService;
+  }
+
+  ★ 场景：不想在测试里依赖真实 Redis 时用。
+
+【★ 坑】
+  · @Transactional 测试里的事务不会真的提交，
+    所以测不到"事务提交后才触发"的逻辑
+    （如 @TransactionalEventListener、@Async）
+  · @SpringBootTest 会启动完整容器，很慢。
+    只为测一个 Service 方法时，优先用 Mockito 纯单元测试
+  · @SpringBootTest 的容器会被缓存复用（相同配置时），
+    但用了 @MockBean 会导致缓存失效，测试变慢
+
+
+################################################################################
+  五、MockMvc 接口测试 ★ 最有价值
+################################################################################
+
+【★ 完整示例】
+
+  @SpringBootTest
+  @AutoConfigureMockMvc
+  @Transactional
+  class UserControllerTest {
+
+      @Autowired
+      private MockMvc mockMvc;              // 模拟 HTTP 客户端
+
+      @Autowired
+      private UserRepository userRepository;
+
+      @Autowired
+      private BCryptPasswordEncoder passwordEncoder;
+
+      @BeforeEach
+      void setUp() {
+          User user = new User();
+          user.setUsername("testuser");
+          user.setPasswordHash(passwordEncoder.encode("123456"));
+          user.setRole("USER");
+          userRepository.save(user);
+      }
+
+      // ===== 正常流程 =====
+
+      @Test
+      @DisplayName("注册成功：返回 200")
+      void testRegisterSuccess() throws Exception {
+          mockMvc.perform(post("/users/register")
+                          .contentType(MediaType.APPLICATION_JSON)
+                          .content("{\"username\":\"newuser\",\"password\":\"123456\"}"))
+                  .andExpect(status().isOk())
+                  .andExpect(jsonPath("$.code").value(200));
+      }
+
+      @Test
+      @DisplayName("登录成功：返回 token")
+      void testLoginSuccess() throws Exception {
+          mockMvc.perform(post("/users/login")
+                          .contentType(MediaType.APPLICATION_JSON)
+                          .content("{\"username\":\"testuser\",\"password\":\"123456\"}"))
+                  .andExpect(status().isOk())
+                  .andExpect(jsonPath("$.data.token").exists())
+                  .andExpect(jsonPath("$.data.userInfo.username").value("testuser"));
+      }
+
+      // ===== 异常流程 =====
+
+      @Test
+      @DisplayName("重复注册：返回用户名已存在")
+      void testRegisterDuplicate() throws Exception {
+          mockMvc.perform(post("/users/register")
+                          .contentType(MediaType.APPLICATION_JSON)
+                          .content("{\"username\":\"testuser\",\"password\":\"123456\"}"))
+                  .andExpect(jsonPath("$.msg").value("用户名已存在"));
+      }
+
+      // ===== 参数校验 =====
+
+      @Test
+      @DisplayName("用户名过短：返回校验失败")
+      void testRegisterWithShortUsername() throws Exception {
+          mockMvc.perform(post("/users/register")
+                          .contentType(MediaType.APPLICATION_JSON)
+                          .content("{\"username\":\"ab\",\"password\":\"123456\"}"))
+                  .andExpect(jsonPath("$.msg").value("用户名长度3-20位"));
+      }
+
+      // ===== ★ 鉴权测试（最有价值）=====
+
+      @Test
+      @DisplayName("无 token 访问受保护接口：返回 401")
+      void testAccessProtectedWithoutToken() throws Exception {
+          mockMvc.perform(delete("/novels/1"))
+                  .andExpect(status().isUnauthorized());
+      }
+
+      @Test
+      @DisplayName("普通用户访问管理员接口：返回 403")
+      void testUserCannotDeleteNovel() throws Exception {
+          String token = loginAndGetToken("testuser", "123456");
+
+          mockMvc.perform(delete("/novels/1")
+                          .header("Authorization", "Bearer " + token))
+                  .andExpect(status().isForbidden());
+      }
+
+      @Test
+      @DisplayName("游客可以浏览列表：返回 200")
+      void testGuestCanReadList() throws Exception {
+          mockMvc.perform(get("/novels?page=1&size=8"))
+                  .andExpect(status().isOk());
+      }
+
+      @Test
+      @DisplayName("登出后 token 进黑名单：返回 401")
+      void testTokenInBlacklist() throws Exception {
+          String token = loginAndGetToken("testuser", "123456");
+
+          mockMvc.perform(post("/users/logout")
+                          .header("Authorization", "Bearer " + token))
+                  .andExpect(status().isOk());
+
+          mockMvc.perform(get("/users/me")
+                          .header("Authorization", "Bearer " + token))
+                  .andExpect(status().isUnauthorized());
+      }
+
+      // ===== 辅助方法 =====
+      private String loginAndGetToken(String username, String password) throws Exception {
+          MvcResult result = mockMvc.perform(post("/users/login")
+                          .contentType(MediaType.APPLICATION_JSON)
+                          .content("{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}"))
+                  .andReturn();
+
+          String response = result.getResponse().getContentAsString();
+          return com.jayway.jsonpath.JsonPath.read(response, "$.data.token");
+      }
+  }
+
+【MockMvc 常用断言】
+  ------------------------------------------------------------------
+  status().isOk()                    200
+  status().isUnauthorized()          401
+  status().isForbidden()             403
+  status().isBadRequest()            400
+  status().isTooManyRequests()       429
+  jsonPath("$.code").value(200)      断言 JSON 字段
+  jsonPath("$.data.list").isArray()  断言是数组
+  jsonPath("$.data.token").exists()  断言存在
+  content().contentType(...)         断言 Content-Type
+  ------------------------------------------------------------------
+
+【★ 鉴权测试是最值得写的四类】
+  · 无 token → 401
+  · 普通用户调管理员接口 → 403
+  · 游客能读公开接口 → 200
+  · 黑名单里的 token → 401
+
+  这四类测试写完，鉴权逻辑就有了保障。
+
+
+################################################################################
+  六、测试数据管理
+################################################################################
+
+【三种方案对比】
+  ------------------------------------------------------------------
+  方案            速度      真实性    依赖            适用
+  ------------------------------------------------------------------
+  H2 内存数据库   快        低        无              简单 CRUD
+  Testcontainers  慢        高        需要 Docker     ★ 集成测试
+  Mock            最快      无        无              单元测试
+  ------------------------------------------------------------------
+
+【★ H2 的坑】
+  H2 虽然快，但和 MySQL 有语法/行为差异：
+    · 数据类型不完全一致
+    · 函数名不同（如 DATE_FORMAT）
+    · 索引和锁行为不同
+    · columnDefinition = "LONGTEXT" 可能不认
+
+  ★ 结论：涉及复杂 SQL 或 MySQL 特性的场景应该用 Testcontainers。
+
+【Testcontainers】
+  @Testcontainers
+  @SpringBootTest
+  class NovelRepositoryTest {
+
+      @Container
+      static MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.0")
+              .withDatabaseName("book_db")
+              .withUsername("root")
+              .withPassword("123456");
+
+      @DynamicPropertySource
+      static void configureProperties(DynamicPropertyRegistry registry) {
+          registry.add("spring.datasource.url", mysql::getJdbcUrl);
+          registry.add("spring.datasource.username", mysql::getUsername);
+          registry.add("spring.datasource.password", mysql::getPassword);
+      }
+  }
+
+  ★ 优点：用真的 MySQL 镜像，行为完全一致，测试完自动销毁
+  ★ 缺点：需要 Docker，启动较慢（第一次要拉镜像）
+
+【@Sql 加载测试数据】
+  @Sql("/test-data/novels.sql")
+  @Test
+  void testWithFixtures() { ... }
+
+【★ TestDataFactory 模式】
+  public class TestDataFactory {
+      public static User createUser(String username) {
+          User user = new User();
+          user.setUsername(username);
+          user.setPasswordHash("$2a$10$...");      // 预计算的 BCrypt 哈希
+          user.setRole("USER");
+          return user;
+      }
+      public static Novel createNovel(String title) { ... }
+  }
+
+  ★ 消除测试里的重复数据构造代码。
+
+
+################################################################################
+  七、测试工程化
+################################################################################
+
+【覆盖率】
+  IDEA 自带：右键测试类 → Run with Coverage
+  JaCoCo：
+    mvn test jacoco:report → target/site/jacoco/index.html
+
+【★ 覆盖率目标怎么定】
+  ------------------------------------------------------------------
+  阶段            目标        说明
+  ------------------------------------------------------------------
+  起步            30-40%      先覆盖核心业务逻辑
+  良好            60-70%      覆盖主要分支
+  优秀            80%+        含异常分支
+  ------------------------------------------------------------------
+
+  ★ 不要追求 100%！
+    覆盖率是手段不是目的。Getter/Setter、简单 DTO 测了也没意义。
+    ★ 面试时能说出"我们目标 60%，重点是核心业务逻辑，
+       而不是为了数字去测 getter"比"我 100% 覆盖"更加分。
+
+【TDD 测试驱动开发】
+  红 → 绿 → 重构
+    1. 先写一个失败的测试（红）
+    2. 写最少的代码让它通过（绿）
+    3. 重构代码，保持测试通过
+
+  ★ TDD 的好处：强制你先想清楚"这个方法应该做什么"
+  ★ 实际工作中不一定要严格 TDD，
+    但"先想测试用例再写实现"是好习惯
+
+【CI 集成】
+  在 GitHub Actions / Jenkins 里跑 mvn clean test，
+  测试不通过就阻止 PR 合并。
+
+【其他测试类型】
+  ------------------------------------------------------------------
+  类型            工具                    测什么
+  ------------------------------------------------------------------
+  性能测试        JMeter / wrk            接口 QPS、响应时间
+  压力测试        JMeter                  高并发下的稳定性
+  安全测试        OWASP ZAP               漏洞扫描
+  契约测试        Pact                    服务间接口约定
+  变异测试        PITest                  验证测试本身的质量
+  ------------------------------------------------------------------
+
+
+################################################################################
+  面试会怎么问
+################################################################################
+
+  Q1：你项目里有单元测试吗？覆盖了哪些？
+  A： ★ 要具体：
+     "分三层。纯单元测试用 Mockito 测 Service 层，
+     重点是章节管理 —— 发布后总字数累加对不对、
+     修改的字数差算得对不对、删除后的扣减和章节号重排对不对。
+     这三个是纯计算逻辑，最容易出边界问题。
+
+     接口层用 MockMvc 测鉴权，
+     覆盖无 token 返回 401、普通用户调管理员接口返回 403、
+     游客能正常浏览、以及登出后 token 进黑名单再访问返回 401。
+
+     用 @SpringBootTest + @Transactional，
+     每个测试方法跑完自动回滚，不污染数据库。"
+
+  Q2：@Mock 和 @MockBean 的区别？
+  A： @Mock 是纯 Mockito，不涉及 Spring 容器；
+     @MockBean 是把 Spring 容器里的 Bean 替换掉，
+     会启动容器所以更慢。
+
+  Q3：@SpringBootTest 和 @WebMvcTest 的区别？
+  A： @SpringBootTest 加载完整容器；
+     @WebMvcTest 只加载 Web 层（Controller + MockMvc + 拦截器），更快。
+
+  Q4：测试里怎么保证不污染数据库？
+  A： @Transactional 让测试方法跑在事务里，结束后自动回滚。
+
+  Q5：什么是 TDD？
+  A： 测试驱动开发，红-绿-重构。
+     先写失败的测试，再写实现，最后重构。
+
+  Q6：覆盖率多少合适？
+  A： ★ 不要答"越高越好"。
+     "覆盖率是手段不是目的。我们目标 60% 左右，
+     重点覆盖核心业务逻辑和异常分支，
+     不会为了数字去测 getter/setter。"
+
+  Q7：怎么测一个抛异常的场景？
+  A： assertThrows(BusinessException.class, () -> xxx)，
+     或 AssertJ 的 assertThatThrownBy(...)
+     .isInstanceOf(...).hasMessageContaining(...)
+
+  Q8：集成测试和单元测试怎么选？
+  A： 单元测试快、隔离、测单个方法逻辑；
+     集成测试慢、真实、测完整链路。
+     ★ 优先写单元测试（金字塔底部要多）。
+
+
+################################################################################
+  学习路径
+################################################################################
+
+  ✅ 第1步：让 mvn test 能跑起来 —— 已完成（12/12 连跑两遍全绿）
+  □ 第2步：给 Service 写纯单元测试（Mockito）
+  □ 第3步：学会 Given-When-Then 结构
+  □ 第4步：用 @ParameterizedTest 消除重复用例
+  □ 第5步：★ 用 MockMvc 写鉴权测试（401/403/黑名单）
+  □ 第6步：用 @Nested + @DisplayName 组织测试
+  □ 第7步：看测试覆盖率，设个目标
+  □ 第8步：提取 TestDataFactory
+  □ 第9步：用 Testcontainers 管理测试依赖的 MySQL / Redis
+     （★ 本项目测试没用到 H2，一直是直连真实 MySQL，
+       所以这里的目标是"让测试环境可复现"，不是"替代 H2"）
+  □ 第10步：@Sql 加载测试夹具
+  □ 第11步：性能测试（JMeter）
+  □ 第12步：CI 集成（测试失败阻止合并）
+
+================================================================================
+                              文件结束
+================================================================================

@@ -1,0 +1,196 @@
+================================================================================
+【项目笔记 · 09】零散知识点
+================================================================================
+  对应知识笔记：docs/知识笔记/09-零散知识点.txt
+
+  说明：这个大类本身是"纯知识"，没有独立的待办。
+        这份项目笔记只做一件事：把零散知识点定位到你的代码里，
+        方便你"看到代码就想起知识点"。
+
+
+################################################################################
+  一、知识点 → 代码位置 对照表
+################################################################################
+
+【三层架构】
+  ------------------------------------------------------------------
+  层              你的类                     职责
+  ------------------------------------------------------------------
+  Controller      NovelController            接请求、返回 Result
+                  UserController
+                  FileController
+  Service         NovelServiceIml            业务逻辑、事务
+                  UserService
+  Repository      NovelRepository            数据库访问
+                  ChapterRepository
+                  UserRepository
+  Entity          Novel / Chapter / User     表映射
+  DTO             NovelDTO / ChapterDTO      入参（带校验）
+                  LoginDTO / UserRegisterDTO
+                  RefreshTokenDTO
+  VO              LoginVO / NovelDetailVO    出参（可脱敏）
+                  NovelRankVO
+  ------------------------------------------------------------------
+
+  ★ 检查点：Controller 里有没有直接调用 Repository？→ 没有 ✓
+  ★ 检查点：Service 里有没有出现 HttpServletRequest？→ 没有 ✓
+     （RateLimitAspect 里用了，但那是切面不是 Service，合理）
+
+【Result 统一返回】
+  位置：common/Result.java
+  用法：Result.success(data) / Result.success() / Result.error(msg) / Result.error(code, msg)
+  ★ 全项目所有 Controller 方法都返回 Result<T>，没有裸返回 Entity 的 ✓
+
+【全局异常处理】
+  位置：common/GlobalExceptionHandler.java
+  分流的异常类型：
+    BusinessException                → Result.error(msg)，warn 级别
+    MethodArgumentNotValidException  → 取第一个字段错误，warn 级别
+    RateLimitException               → 429 + msg，warn 级别
+    MaxUploadSizeExceededException   → 文件过大提示，✓ 已修复（参数类型正确，返回"文件不能超过 10MB"）
+    RuntimeException                 → error 级别
+    Exception                        → 兜底"系统繁忙"，★ 用了 warn 应为 error
+
+【JPA 注解】
+  位置：entity/Novel.java、Chapter.java、User.java
+  ------------------------------------------------------------------
+  注解                    用在哪                      作用
+  ------------------------------------------------------------------
+  @Entity / @Table        三个实体                    表映射
+  @Id / @GeneratedValue   id 字段                     IDENTITY 自增
+  @Column                 title/summary 等            nullable / length / columnDefinition
+  @PrePersist             Novel.lastUpdateTime        ★ 自动填 lastUpdateTime（Novel 没有 createTime）
+                          Chapter.createTime          ★ 自动填创建时间
+  @PreUpdate              Novel.lastUpdateTime        ★ 自动更新修改时间
+  ------------------------------------------------------------------
+
+  ★ 亮点：@PrePersist / @PreUpdate 是很好的实践，
+    不用在每个 Service 方法里手写 setCreateTime(LocalDateTime.now())。
+
+【Web 注解】
+  位置：controller/*.java
+  ------------------------------------------------------------------
+  注解                    用在哪
+  ------------------------------------------------------------------
+  @RestController         三个 Controller 类
+  @RequestMapping         类级别路径前缀
+  @PostMapping/@GetMapping/@PutMapping/@DeleteMapping  方法级别
+  @PathVariable           /novels/{novelId}/chapters/{chapterId}
+  @RequestBody            @Valid 配合接收 JSON
+  @RequestParam(defaultValue="1")  page / size / top / type
+  ------------------------------------------------------------------
+
+  ★ 亮点：分页参数用了 @RequestParam(defaultValue = "1")，
+    写法是规范的 ✓
+
+【参数校验注解】
+  位置：dto/*.java
+  ------------------------------------------------------------------
+  DTO                     校验规则
+  ------------------------------------------------------------------
+  UserRegisterDTO         @NotBlank + @Size(min=3,max=20) username
+                          @NotBlank + @Size(min=6) password
+  LoginDTO                @NotBlank username / password
+  NovelDTO                @NotBlank title / summary / category
+  ChapterDTO              @NotBlank title / content
+  RefreshTokenDTO         @NotBlank refreshToken
+  ------------------------------------------------------------------
+
+  ★ 待改进：UserRegisterDTO 里 password 的 message 写的是"用户名不能为空"，
+    应该是"密码不能为空"。位置：dto/UserRegisterDTO.java 第 14 行附近。
+    ★ 这是一个真实的文案 bug，前端会显示错误的提示。
+
+【HTTP 状态码实战】
+  ------------------------------------------------------------------
+  你的代码返回什么                        位置
+  ------------------------------------------------------------------
+  200 + Result{code:200}                 正常业务
+  200 + Result{code:500,msg:...}         业务异常（★ HTTP 仍是 200）
+  401 {"code":401,"msg":"未登录或token无效"}  LoginInterceptor
+  403 {"code":403,"msg":"权限不足..."}       LoginInterceptor
+  429 + Result{code:...}                  GlobalExceptionHandler
+  ------------------------------------------------------------------
+
+  ★ 一个可讨论的设计问题：
+    业务异常返回 HTTP 200 + body 里 code=500，
+    这是国内常见做法，但严格 RESTful 应该返回对应的 HTTP 状态码。
+    面试如果被问到，能说出"这是团队约定，好处是前端统一处理，
+    坏处是不符合 REST 语义"就够了。
+
+【前后端交互】
+  ------------------------------------------------------------------
+  知识点                  你的代码位置
+  ------------------------------------------------------------------
+  统一信封解包            res.data.data || res.data（前端做了兼容）
+  自动带 Token            src/api/index.js 请求拦截器
+  401 自动跳登录          src/api/index.js 响应拦截器
+  Vite 代理 /api          vite.config.js
+  分页对象解包            data.content / data.totalElements
+  ------------------------------------------------------------------
+
+  ★ 前端假分页：NovelListView.vue 拿到一页后在前端 filter 分类
+    详见项目笔记/01-业务功能.txt
+
+
+################################################################################
+  二、待办清单
+################################################################################
+
+--------------------------------------------------------------------------------
+P1 · 应该做
+--------------------------------------------------------------------------------
+
+  □ 修 UserRegisterDTO 的 password 校验文案
+    位置：dto/UserRegisterDTO.java
+    现状：@NotBlank(message = "用户名不能为空")  ← 加在 password 字段上，文案错了
+    改动：改成 "密码不能为空"
+
+--------------------------------------------------------------------------------
+P2 · 可以做
+--------------------------------------------------------------------------------
+
+  □ 统一异常返回的 HTTP 状态码语义
+    现状：业务异常返回 HTTP 200 + body code=500
+    讨论：是否要改成真正的 4xx/5xx？
+    ★ 这是个设计取舍，不是 bug。想清楚再改，别为了"规范"破坏前端兼容。
+
+  □ 把零散知识点的部分整理成速查卡片
+    ★ 这份笔记本身就是速查表，可以直接用。
+
+  □ 补充"Java 基础"知识块
+    现状：知识笔记 09 末尾列了一批待补的 Java 基础知识点
+          （String / 集合 / 泛型 / 反射 / IO / Java 8 特性 …）
+    建议：单独开一个包/文件夹专攻 Java 基础
+          ★ 这是面试第一轮笔试的主要内容，不能空着。
+
+
+################################################################################
+  三、检查清单（可以在改代码时自查）
+################################################################################
+
+  □ Controller 里有没有直接调 Repository？
+  □ Service 里有没有感知 HTTP（HttpServletRequest / ResponseEntity）？
+  □ 有没有方法返回 Entity 而不是 DTO/VO？
+  □ 有没有接口没有加 @Valid？
+  □ 有没有写操作没加 @Transactional？
+  □ 有没有 @Transactional 没写 rollbackFor？
+  □ 有没有 catch 吃掉异常导致事务不回滚？
+  □ 有没有 msg 文案写错的？
+  □ 有没有魔法数字 / 硬编码路径？
+  □ 有没有 @Data 的 toString 泄露敏感字段？
+
+
+################################################################################
+  四、完成度记录（自己往后追加）
+################################################################################
+
+  日期        变动                                    完成度
+  ------------------------------------------------------------------
+  2026-09-22  初始盘点，建立知识点↔代码对照            —
+  2026-09-22  发现 UserRegisterDTO 文案 bug            ★ 新增 P1
+  ------------------------------------------------------------------
+  ________    ______________________________________  ________
+
+================================================================================
+                              文件结束
+================================================================================

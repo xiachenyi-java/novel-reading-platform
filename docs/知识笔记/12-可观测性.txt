@@ -1,0 +1,507 @@
+================================================================================
+【大类 12】可观测性
+================================================================================
+  对应项目笔记：docs/项目笔记/12-可观测性.txt
+
+【定位】回答"线上炸了你怎么知道、怎么查"。
+
+【★ 可观测性三件套】
+  ------------------------------------------------------------------
+  支柱              回答的问题              工具
+  ------------------------------------------------------------------
+  日志 Logging      发生了什么              SLF4J + Logback + ELK
+  指标 Metrics      有多少、多快            Micrometer + Prometheus
+  链路 Tracing      经过了哪些环节          SkyWalking / Zipkin
+  ------------------------------------------------------------------
+
+
+################################################################################
+  一、日志体系
+################################################################################
+
+【SLF4J + Logback】
+  SLF4J 是门面（接口），Logback 是实现。
+  ★ 好处：换实现不用改代码。
+
+【日志级别使用策略】
+  ------------------------------------------------------------------
+  级别    什么时候用                            要不要堆栈
+  ------------------------------------------------------------------
+  TRACE   最详细的追踪（几乎不用）
+  DEBUG   开发调试，生产环境关闭                否
+  INFO    关键业务节点（登录、发布、删除）      否
+  WARN    业务异常、可预期的错误（参数错、限流）否
+  ERROR   系统异常、不可预期的错误（NPE、SQL错） ★ 必须带
+  ------------------------------------------------------------------
+
+  【★ 分级的意义】
+    · 生产环境通常只开 INFO 以上，减少磁盘和性能开销
+    · 告警规则基于级别：ERROR 立即告警，WARN 汇总后告警
+    · 日志量突增本身也是信号
+
+【占位符 vs 字符串拼接】
+  ✗ log.debug("用户 " + name + " 登录");     // 无论级别高低都会拼接
+  ✓ log.debug("用户 {} 登录", name);         // 级别不够时不执行 toString
+
+  ★ 高并发场景下这个差异很明显。
+
+【★ 三个必须避免的错误】
+  □ log.error(e.getMessage())        // 没有堆栈，线上查不到行号
+    ✓ log.error("描述", e)
+  □ catch (Exception e) { }          // 空 catch，问题被吞掉
+    ✓ catch (Exception e) { log.warn("...", e); }
+  □ log.info("user={}", user)        // @Data 的 toString 打印所有字段
+    ✓ log.info("userId={}", user.getId())
+
+【★ 日志脱敏】
+  绝对不能出现在日志里：
+    · 密码（明文和哈希都不行）
+    · 完整的 token
+    · 身份证号、银行卡号、手机号（部分脱敏）
+
+  做法：
+    · 只 log 需要的字段
+    · @ToString.Exclude 排除敏感字段
+    · 自定义脱敏工具：138****8888
+
+【★ traceId：让一次请求的日志串起来】
+
+  问题：
+    并发 100 个请求时，日志文件里是这样的：
+      10:00:01 INFO  发布章节: novelId=1
+      10:00:01 INFO  用户登录: username=alice
+      10:00:01 INFO  发布章节: novelId=2
+      10:00:01 ERROR 空指针异常
+    ↑ 根本不知道这个 ERROR 是哪个请求产生的
+
+  解决：给每个请求分配一个 traceId，打到每一行日志里：
+      10:00:01 [a1b2c3d4] INFO  发布章节: novelId=1
+      10:00:01 [e5f6g7h8] INFO  用户登录: username=alice
+      10:00:01 [a1b2c3d4] ERROR 空指针异常
+    ↑ 现在可以 grep a1b2c3d4 看到这个请求的完整链路
+
+  【实现：MDC（Mapped Diagnostic Context）】
+    原理和 ThreadLocal 一模一样。
+
+    @Component
+    @Order(Ordered.HIGHEST_PRECEDENCE)
+    public class TraceIdFilter implements Filter {
+        @Override
+        public void doFilter(ServletRequest req, ServletResponse res,
+                             FilterChain chain) throws IOException, ServletException {
+            try {
+                String traceId = UUID.randomUUID().toString()
+                        .replace("-", "").substring(0, 8);
+                MDC.put("traceId", traceId);
+                chain.doFilter(req, res);
+            } finally {
+                MDC.clear();          // ★ 和 ThreadLocal 一样必须清理
+            }
+        }
+    }
+
+    logback 配置：
+      <pattern>%d{HH:mm:ss} [%X{traceId}] %-5level %logger{36} - %msg%n</pattern>
+      ★ %X{traceId} 就是取 MDC 里的值
+
+  【★ 加分项】
+    · 如果前端传了 traceId，就用前端的；否则自己生成
+      → 前后端日志能串起来
+    · 微服务场景下，traceId 通过 HTTP Header 传给下游服务
+    · 也可以把 traceId 返回给前端（响应头），用户报错时能提供
+
+【日志切割与归档】
+  logging.logback.rollingpolicy.max-file-size=50MB
+  logging.logback.rollingpolicy.max-history=30
+  logging.logback.rollingpolicy.total-size-cap=3GB
+
+  ★ 只配 file.name 不配 max-file-size，日志会无限膨胀占满磁盘。
+
+【异步日志（性能优化）】
+  <appender name="ASYNC" class="ch.qos.logback.classic.AsyncAppender">
+      <queueSize>512</queueSize>
+      <discardingThreshold>0</discardingThreshold>
+      <appender-ref ref="FILE"/>
+  </appender>
+
+  ★ 原理和 MQ 一样：把日志写进队列，后台线程慢慢写磁盘。
+  ★ 坑：队列满了会丢日志（discardingThreshold 控制丢弃策略）。
+
+
+################################################################################
+  二、健康检查与指标
+################################################################################
+
+【Spring Boot Actuator】
+
+  1. 加依赖：
+     spring-boot-starter-actuator
+
+  2. 配置：
+     management.endpoints.web.exposure.include=health,info,metrics
+     management.endpoint.health.show-details=always
+
+  3. 访问 http://localhost:8080/actuator/health：
+     {
+       "status": "UP",
+       "components": {
+         "db":    { "status": "UP", "details": { "database": "MySQL" } },
+         "redis": { "status": "UP", "version": "7.0.0" }
+       }
+     }
+
+  ★ 一眼看出"数据库连不上"还是"Redis 挂了"，排查效率极高。
+
+【★ 端点安全（重要）】
+  ------------------------------------------------------------------
+  端点                      作用                      生产是否暴露
+  ------------------------------------------------------------------
+  /actuator/health          健康检查                  ✓ 必须
+  /actuator/info            应用信息                  ✓
+  /actuator/metrics         指标                      △ 谨慎
+  /actuator/loggers         动态调整日志级别          △ 谨慎
+  /actuator/env             ★ 环境变量（含密码）      ✗ 严禁
+  /actuator/beans           所有 Bean                 ✗ 严禁
+  /actuator/heapdump        ★ 堆转储（可提取敏感数据） ✗ 严禁
+  /actuator/mappings        所有接口映射              ✗ 严禁
+  ------------------------------------------------------------------
+
+  ★ 生产环境只暴露 health，其他一律关闭。
+
+【Micrometer + Prometheus】
+
+  1. 加依赖：
+     micrometer-registry-prometheus
+
+  2. 配置：
+     management.endpoints.web.exposure.include=health,prometheus
+
+  3. 访问 /actuator/prometheus 会输出：
+     http_server_requests_seconds_count{uri="/novels",status="200"} 1523
+     http_server_requests_seconds_sum{uri="/novels",status="200"} 12.5
+     jvm_memory_used_bytes{area="heap"} 1.2E8
+
+  4. Prometheus 定时抓取 → Grafana 可视化
+
+【★ 自定义业务指标】
+  @Service
+  @RequiredArgsConstructor
+  public class NovelService {
+
+      private final MeterRegistry meterRegistry;
+
+      public Chapter addChapter(Integer novelId, ChapterDTO dto) {
+          // ... 业务逻辑 ...
+
+          meterRegistry.counter("novel.chapter.published",
+                               "novelId", String.valueOf(novelId))
+                       .increment();
+
+          return chapter;
+      }
+  }
+
+  ★ 这样就能在 Grafana 上看到"每天发布了多少章节"。
+
+【四种指标类型】
+  ------------------------------------------------------------------
+  类型       说明                              例子
+  ------------------------------------------------------------------
+  Counter    只增不减的计数器                 请求数、错误数
+  Gauge      瞬时值，可增可减                 内存使用、队列长度
+  Timer      耗时分布（含 P50/P95/P99）       接口响应时间
+  DistributionSummary  数值分布              请求体大小
+  ------------------------------------------------------------------
+
+【★ P99 的意义】
+  P99 = 99% 的请求耗时低于这个值。
+  平均耗时会被大量快请求拉低，掩盖少数慢请求。
+  所以监控要看 P95 / P99，而不是平均值。
+
+
+################################################################################
+  三、性能监控
+################################################################################
+
+【★ 接口耗时切面（投入产出比最高）】
+
+  @Aspect
+  @Component
+  @Slf4j
+  public class ApiCostAspect {
+
+      private final MeterRegistry meterRegistry;
+
+      @Around("execution(* com.example..controller..*.*(..))")
+      public Object recordCost(ProceedingJoinPoint point) throws Throwable {
+          long start = System.currentTimeMillis();
+          String method = point.getSignature().toShortString();
+          try {
+              Object result = point.proceed();
+              long cost = System.currentTimeMillis() - start;
+
+              if (cost > 500) {
+                  log.warn("慢接口: {} 耗时 {}ms", method, cost);
+              }
+              return result;
+          } catch (Throwable e) {
+              log.error("接口异常: {} 耗时 {}ms", method,
+                        System.currentTimeMillis() - start, e);
+              throw e;
+          }
+      }
+  }
+
+  ★ 更专业的做法：用 Micrometer 的 Timer 记录 P50/P95/P99 分布。
+
+  【可以记录的维度】
+    · 接口名
+    · 耗时
+    · 当前用户（UserContext）
+    · traceId（配合日志）
+    · 是否成功
+
+【★ 慢 SQL 监控】
+  ------------------------------------------------------------------
+  方式                    做法
+  ------------------------------------------------------------------
+  MySQL 慢查询日志        slow_query_log=1, long_query_time=1
+                          分析：mysqldumpslow / pt-query-digest
+  Druid 监控页面          访问 /druid/index.html
+                          看 SQL 执行次数、平均耗时、慢 SQL 排行
+  p6spy                   打印所有 SQL 及其真实执行耗时（含参数）
+  JPA show-sql            只能看 SQL，★ 看不到真实耗时，生产必须关
+  ------------------------------------------------------------------
+
+【★ JVM 监控工具】
+  ------------------------------------------------------------------
+  命令              作用
+  ------------------------------------------------------------------
+  jps -l            列出所有 Java 进程及 PID
+  jstat -gc <pid>   查看 GC 情况（各区内存、GC 次数和耗时）
+  jmap -heap <pid>  查看堆内存使用
+  jmap -dump        导出堆转储文件（排查 OOM）
+  jstack <pid>      打印线程栈（排查死锁、CPU 100%）
+  jinfo             查看/动态修改 JVM 参数
+  ------------------------------------------------------------------
+
+  可视化：jconsole（JDK 自带）、VisualVM（JDK 自带）、
+          JProfiler / YourKit（商业）、MAT（分析堆转储）
+
+【★★ CPU 100% 排查流程（经典面试题）】
+  1. top -Hp <pid>                        # 找到占 CPU 最高的线程 ID
+  2. printf "%x\n" <tid>                  # 线程 ID 转成十六进制
+  3. jstack <pid> | grep -A 30 <十六进制>  # 找到对应线程的堆栈
+  4. 分析它在执行什么代码
+
+  常见原因：死循环、频繁 GC、大量线程上下文切换、正则回溯
+
+【★ OOM 排查流程】
+  1. 启动参数加：-XX:+HeapDumpOnOutOfMemoryError
+                  -XX:HeapDumpPath=/path/to/dump
+  2. 用 MAT 或 VisualVM 打开 .hprof 文件
+  3. 看"支配树"找占用最大的对象
+  4. 看引用链，定位是谁持有它
+
+  常见原因：
+    · 集合无限增长（缓存没设上限）
+    · 大对象（一次性查全表）
+    · 线程泄漏（线程池配置不当）
+    · 类加载器泄漏（热部署场景）
+
+
+################################################################################
+  四、链路追踪
+################################################################################
+
+【为什么需要】
+  单体应用用 traceId + 日志就够了。
+  但微服务下，一个请求经过网关 → 用户服务 → 订单服务 → 库存服务，
+  出问题时不知道是哪个环节慢。
+
+【核心概念】
+  ------------------------------------------------------------------
+  概念        说明
+  ------------------------------------------------------------------
+  Trace       一次完整的请求链路（一个 traceId）
+  Span        链路中的一个环节（一次 RPC、一次 DB 查询）
+  Parent Span 父 Span，形成树形结构
+  ------------------------------------------------------------------
+
+  一次请求的 Span 树：
+    Trace: abc123
+      ├─ Span: 网关转发              (5ms)
+      ├─ Span: 用户服务.查询用户      (20ms)
+      │    ├─ Span: MySQL 查询       (15ms)   ← 瓶颈在这里
+      │    └─ Span: Redis 查询       (2ms)
+      └─ Span: 订单服务.查询订单      (10ms)
+
+【选型对比】
+  ------------------------------------------------------------------
+  方案          侵入性    功能            国内流行度
+  ------------------------------------------------------------------
+  SkyWalking    无侵入    强（自动埋点）  ★ 高
+  Zipkin        需引入    中              中
+  Pinpoint      无侵入    强              中
+  Jaeger        需引入    中              中
+  OpenTelemetry 需引入    标准            ↑ 未来趋势
+  ------------------------------------------------------------------
+
+  ★ SkyWalking 通过 Java Agent 字节码增强实现无侵入，
+    只需在启动命令加 -javaagent:skywalking-agent.jar。
+
+【★ 单体应用的过渡方案】
+  在引入链路追踪之前，traceId + 日志已经能解决 80% 的问题。
+  建议先做 traceId，再考虑 SkyWalking。
+
+
+################################################################################
+  五、线上诊断工具：Arthas
+################################################################################
+
+【Arthas 是什么】
+  阿里开源的 Java 诊断工具，不用重启服务就能排查问题。
+
+【安装】
+  curl -O https://arthas.aliyun.com/arthas-boot.jar
+  java -jar arthas-boot.jar
+
+【★ 最常用的命令】
+  ------------------------------------------------------------------
+  命令                          作用
+  ------------------------------------------------------------------
+  dashboard                     实时看板（线程、内存、GC）
+  thread                        查看线程栈
+  thread -n 3                   查看最忙的 3 个线程
+  thread -b                     ★ 查找阻塞其他线程的线程（找死锁）
+  jad com.example.Foo           反编译某个类（确认线上代码版本）
+  watch Foo method              ★ 观察方法调用的入参和返回值
+  trace Foo method              ★ 追踪方法内部调用路径及耗时
+  stack Foo method              查看方法被谁调用了
+  sc / sm                       查找类 / 查找方法
+  ognl                          执行表达式（动态改值）
+  ------------------------------------------------------------------
+
+【★ trace：找出方法里哪一行慢】
+  trace com.example.service.NovelService findRanking
+
+  输出：
+    `---ts=2026-09-22 10:00:00;thread_name=http-nio-8080-exec-1;
+        `---[25.3ms] NovelService:findRanking()
+            +---[20.1ms] NovelRepository:findAllById()    ← 瓶颈找到了
+            +---[4.8ms] StringRedisTemplate:opsForZSet()
+            `---[0.4ms] Collectors:toMap()
+
+【★ watch：看方法实际收到的参数】
+  watch com.example.service.NovelService addChapter "{params, returnObj}" -x 2
+
+  ★ 排查"参数到底传的什么"神器，不用加日志重启。
+
+【★ 注意事项】
+  · Arthas 会 attach 到运行中的 JVM，有轻微性能影响
+  · trace 命令要加 -n 限制次数，否则会一直输出
+  · 生产环境使用要谨慎，最好在低峰期
+  · 用完记得 stop / shutdown 退出
+
+  ★ 面试加分点：能说出"我用 Arthas 的 trace 定位过慢接口"，
+    比只会说"看日志"高一档。但要真的用过，否则追问会露馅。
+
+
+################################################################################
+  六、告警
+################################################################################
+
+【什么该告警】
+  ------------------------------------------------------------------
+  指标                          阈值示例              级别
+  ------------------------------------------------------------------
+  接口错误率                    > 1% 持续 5 分钟      P1
+  接口 P99 耗时                 > 1s 持续 5 分钟      P2
+  服务不可用（health 检查失败） 立即                  P0
+  Redis / MySQL 连接失败        立即                  P0
+  JVM 老年代使用率              > 85%                 P2
+  GC 耗时占比                   > 10%                 P2
+  队列积压                       > 10000               P2
+  CPU / 内存                    > 85% 持续 10 分钟    P2
+  ------------------------------------------------------------------
+
+【★ 告警的三个原则】
+  1. 少而准 —— 告警太多会让团队麻木（"告警疲劳"）
+  2. 可行动 —— 每条告警都要有明确的处理动作
+  3. 分级 —— P0 打电话，P1 发群消息，P2 记录待查
+
+【常用工具】
+  · Prometheus Alertmanager
+  · Grafana Alerting
+  · 企业微信 / 钉钉 / 飞书机器人
+  · PagerDuty（国外）
+
+
+################################################################################
+  面试会怎么问
+################################################################################
+
+  Q1：线上接口变慢了怎么排查？
+  A： ★ 完整答法：
+     ① 先用监控定位是哪个接口慢（Actuator / Prometheus / 耗时切面）
+     ② 用 traceId 找到这个请求的完整日志链路
+     ③ 用 Arthas 的 trace 命令定位到具体是哪个方法慢
+     ④ 如果是 SQL 慢 → EXPLAIN 分析执行计划，看要不要加索引
+     ⑤ 如果是外部调用慢 → 看是不是要加缓存或改异步
+     ⑥ 如果是 GC 问题 → jstat 看 GC 频率和耗时
+
+  Q2：CPU 使用率 100% 怎么排查？
+  A： top -Hp <pid> 找线程 → printf "%x" 转十六进制 →
+     jstack <pid> | grep 十六进制 → 看线程在干什么。
+     常见原因：死循环、频繁 GC、大量线程上下文切换。
+
+  Q3：OOM 怎么排查？
+  A： 加 -XX:+HeapDumpOnOutOfMemoryError 导出堆转储，
+     用 MAT / VisualVM 分析，找占用最大的对象和它的引用链。
+
+  Q4：你项目怎么做日志的？
+  A： @Slf4j + 占位符 + 分级（业务 warn / 系统 error 带堆栈）
+     + traceId 串联请求 + 文件滚动（50MB × 30 天）。
+
+  Q5：Actuator 暴露哪些端点？生产要注意什么？
+  A： 只暴露 health，用于健康检查。
+     ★ 重点：env / beans / heapdump 必须禁用，
+       否则会泄露配置（包括数据库密码）和内部结构。
+
+  Q6：怎么监控一个接口的 P99 耗时？
+  A： 用 Micrometer 的 Timer + publishPercentiles(0.99)，
+     或者用 Prometheus 的 histogram_quantile 函数计算。
+
+  Q7：为什么看 P99 而不是平均值？
+  A： 平均值会被大量快请求拉低，掩盖少数慢请求。
+     比如 99 个请求 10ms + 1 个请求 2s，平均值才 30ms，
+     但那 1% 的用户体验极差。看 P99 才能发现长尾问题。
+
+  Q8：日志和链路追踪的区别？
+  A： 日志记录"发生了什么"（离散事件），
+     链路追踪记录"经过了哪些环节、每个环节多久"（调用关系）。
+     单体应用用 traceId + 日志基本够用，
+     微服务才需要完整的链路追踪。
+
+
+################################################################################
+  学习路径
+################################################################################
+
+  □ 第1步：规范日志分级（业务 warn / 系统 error）
+  □ 第2步：★ traceId 贯穿请求（MDC + Filter）
+  □ 第3步：★ 接口耗时切面（AOP）
+  □ 第4步：接入 Actuator 健康检查
+  □ 第5步：慢 SQL 监控（慢查询日志 / Druid）
+  □ 第6步：JVM 基础监控（jps / jstat / jstack / jmap）
+  □ 第7步：Arthas 实战（trace / watch）
+  □ 第8步：Micrometer + Prometheus + Grafana
+  □ 第9步：自定义业务指标
+  □ 第10步：异步日志（AsyncAppender）
+  □ 第11步：ELK 日志聚合
+  □ 第12步：告警规则配置
+  □ 第13步：链路追踪（SkyWalking）
+
+================================================================================
+                              文件结束
+================================================================================

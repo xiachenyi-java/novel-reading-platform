@@ -1,0 +1,346 @@
+================================================================================
+【项目笔记 · 13】安全加固
+================================================================================
+  对应知识笔记：docs/知识笔记/13-安全加固.txt
+  相关代码：controller/FileController.java、config/WebConfig.java、
+            common/GlobalExceptionHandler.java、config/CorsConfig.java
+
+
+################################################################################
+  一、现状盘点
+################################################################################
+
+【完成度】0/8 官方清单，但已有 10 项安全实践（超过应届生平均水平）
+
+【★ 你已经做到的安全防护（面试可以主动讲）】
+
+  ------------------------------------------------------------------
+  编号  防护措施                              位置
+  ------------------------------------------------------------------
+  1     密码 BCrypt 加密，不存明文              UserService.register
+  2     登录接口限流 5次/60秒                   UserController.login
+  3     注册接口限流 5次/60秒                   UserController.register
+  4     文件上传路径穿越校验                    FileController.upload
+        （normalize + startsWith）
+  5     文件上传 Content-Type 校验              FileController.upload
+  6     上传文件 UUID 重命名                    FileController.upload
+        （防覆盖 + 防猜路径）
+  7     删除章节校验归属（防水平越权）          NovelServiceIml.deleteChapter
+  8     修改章节校验归属                        NovelServiceIml.updateChapter
+  9     统一错误提示（防账号枚举）              UserService.login
+  10    返回用户信息时置空 passwordHash         UserService.login
+  ------------------------------------------------------------------
+  + 生产环境关闭接口文档、关闭 show-sql
+  + 数据库密码、JWT secret 用环境变量注入
+
+  ★ 这些在应届生项目里已经不错了，面试时值得主动提。
+
+【★ 但还有真实漏洞，按严重程度排序】
+
+  ------------------------------------------------------------------
+  编号  漏洞                                   严重度
+  ------------------------------------------------------------------
+  1     上传可伪造 Content-Type                 ★★★
+        + /uploads/** 静态映射
+        = 存储型 XSS
+  ------------------------------------------------------------------
+  2     文件超限异常处理器参数类型错误          ★★★
+        → 上传超大文件返回 500 而不是友好提示
+        ✓ 已修复（参数类型已改为 MaxUploadSizeExceededException，返回友好提示）
+  ------------------------------------------------------------------
+  3     登出后 refreshToken 仍有效              ★★★
+        （user_refresh 从不写入）
+        → 认证绕过
+        ✓ 已修复（登录写 user_refresh，登出删除正反两个索引，refresh 时轮换；
+          旧 refreshToken 登出后无法再换新 token）
+  ------------------------------------------------------------------
+  4     passwordHash 被写进 Redis 缓存          ★★
+  ------------------------------------------------------------------
+  5     上传接口无权限控制、无频率限制          ★★
+        （任何登录用户可无限上传）
+  ------------------------------------------------------------------
+  6     日志脱敏未检查                          ★
+  ------------------------------------------------------------------
+  7     CorsConfig 硬编码 localhost:5173        ★
+  ------------------------------------------------------------------
+  8     无登录失败锁定（仅靠 IP 限流）          ★
+  ------------------------------------------------------------------
+
+【★ 漏洞 1 详情：存储型 XSS 的完整攻击链】
+
+  你的代码：
+    FileController：
+      String contentType = file.getContentType();
+      if (contentType == null || !contentType.startsWith("image/")) {
+          return Result.error("只能上传图片文件");
+      }
+      String ext = originalName.substring(originalName.lastIndexOf("."));
+      String newName = UUID.randomUUID() + ext;        // ← ext 没校验！
+      Files.copy(file.getInputStream(), targetPath);
+
+    WebConfig：
+      registry.addResourceHandler("/uploads/**")
+              .addResourceLocations("file:" + uploadPath + "/");
+      .excludePathPatterns("/uploads/**")              // ← 匿名可访问
+
+  攻击流程：
+    ① 攻击者准备一个 xss.html，内容是窃取 localStorage 的脚本
+    ② 用 Postman 上传，手动设置 Content-Type: image/png
+    ③ 后端校验通过，保存为 {uuid}.html
+    ④ 攻击者访问 /uploads/{uuid}.html
+    ⑤ 浏览器按 text/html 渲染并执行 JS
+    ⑥ JS 读取 localStorage 里的 token → 发给攻击者
+    ⑦ 攻击者拿到 token，完全接管账号
+
+  ★ 注意：Content-Type 是客户端发来的 HTTP 头，可以随意伪造。
+    只校验它等于没校验。
+
+【★ 漏洞 2 详情（✓ 已修复）：异常处理器会崩】
+
+  位置：common/GlobalExceptionHandler.java
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public Result<Void> handleFileSizeException(MethodArgumentNotValidException e)
+                                                                    ↑ 类型不匹配
+
+  为什么崩：
+    Spring 要把抛出的 MaxUploadSizeExceededException 塞进
+    MethodArgumentNotValidException 类型的参数 → 类型不兼容
+    → 抛 IllegalArgumentException → 处理器自己失败
+    → 用户看到默认的 500 错误页
+
+  验证方法：
+    上传一个 15MB 的文件（超过配置的 10MB），
+    看返回的是"文件不能超过 10MB"还是 500。
+
+  ✓ 已修复（GlobalExceptionHandler）：
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public Result<Void> handleFileSizeException(MaxUploadSizeExceededException e) {
+        log.warn("传输文件过大: {}", e.getMessage());
+        return Result.error("上传失败：文件大小不能超过 10MB");
+    }
+    参数类型已匹配，返回友好提示，不再 500。
+
+
+################################################################################
+  二、待办清单
+################################################################################
+
+--------------------------------------------------------------------------------
+P0 · 必须做（真实漏洞，优先修）
+--------------------------------------------------------------------------------
+
+  □ 上传扩展名白名单
+    位置：controller/FileController.java
+    做法：
+      private static final Set<String> ALLOWED_EXT =
+              Set.of(".jpg", ".jpeg", ".png", ".gif", ".webp");
+
+      String ext = originalName != null && originalName.contains(".")
+              ? originalName.substring(originalName.lastIndexOf(".")).toLowerCase()
+              : "";
+      if (!ALLOWED_EXT.contains(ext)) {
+          return Result.error("只支持 jpg/jpeg/png/gif/webp 格式");
+      }
+    ★ 注意要 toLowerCase()，否则 .PNG 会被拒绝。
+
+  ✓ 修文件超限异常处理器的参数类型（已完成）
+    位置：common/GlobalExceptionHandler.java
+    改动：
+      @ExceptionHandler(MaxUploadSizeExceededException.class)
+      public Result<Void> handleFileSizeException(MaxUploadSizeExceededException e) {
+          log.warn("传输文件过大: {}", e.getMessage());
+          return Result.error("上传失败：文件大小不能超过 10MB");
+      }
+    验证：上传 15MB 文件，应返回友好提示。
+
+  ✓ 补 user_refresh 反向索引（登出后 refreshToken 失效）（已完成）
+    位置：service/UserService.java 的 login()
+    ★ 这是 03-认证授权 和 04-限流防刷 共有的 P0 项。
+    详见：项目笔记/03-认证授权.txt
+
+--------------------------------------------------------------------------------
+P1 · 应该做
+--------------------------------------------------------------------------------
+
+  □ 文件头 magic number 校验
+    位置：controller/FileController.java
+    做法：读文件前几个字节，比对图片格式的魔数
+      jpg  → FFD8FF
+      png  → 89504E47
+      gif  → 47494638
+      webp → 52494646（RIFF 开头）
+    意义：只改后缀名改不了真实文件类型，这是真正的"是不是图片"校验。
+
+  □ 给 passwordHash 脱敏
+    ① 缓存脱敏：UserService.getCurrentUser() 里缓存前 setPasswordHash(null)
+    ② 日志脱敏：检查有没有 log.info("user={}", user)
+       （@Data 的 toString 包含 passwordHash）
+    ★ 和项目笔记/05-缓存体系.txt 的 P0 是同一件事
+
+  □ 上传接口加权限和限流
+    位置：controller/FileController.java
+    改动：
+      · 加 @RateLimit(key = "upload", limit = 10, window = 60)
+      · 考虑是否要加 @RequireAdmin（取决于业务：只有管理员发小说→加；
+        如果用户能传头像→不加，但要有其他限制）
+
+  □ 上传响应头加固
+    方案一：给 /uploads/** 加 X-Content-Type-Options: nosniff
+    方案二：图片走独立的域名/端口，与主站隔离
+    方案三：图片二次重绘（用 Thumbnailator 重新生成，彻底消除恶意载荷）
+    ★ 方案三是根治，方案一二是缓解。
+
+  □ 区分业务异常和系统异常
+    位置：common/GlobalExceptionHandler.java
+    问题：handleRuntimeException 直接返回 e.getMessage()，
+          如果是数据库异常（SQLGrammarException），
+          message 会包含表名、字段名、SQL 片段 → 泄露内部结构。
+    改法：明确区分可预期的业务异常（直接返回 message）
+          和不可预期的系统异常（返回统一话术）。
+
+  □ CorsConfig 白名单配置化
+    位置：config/CorsConfig.java + application-*.properties
+
+--------------------------------------------------------------------------------
+P2 · 可以做
+--------------------------------------------------------------------------------
+
+  □ 登录失败次数锁定
+    位置：UserService.login()
+    做法：Redis 计数 key = login:fail:{username}，5 次锁定 15 分钟
+    ★ 注意副作用：会被用来锁死别人的账号。
+      更完善的方案：IP + 用户名组合计数，或用验证码代替硬锁定。
+
+  □ 逐个接口检查水平越权
+    ★ 你已经检查清单（见下方"越权检查结果"），确认没有遗漏。
+
+  □ 密码强度策略升级
+    现状：@Size(min = 6) 只要求 6 位
+    改进：8 位以上 + 大小写 + 数字
+
+  □ 改密码后让所有 token 失效
+    做法：删除该用户所有 refreshToken + 当前 accessToken 加黑名单
+
+  □ 敏感操作二次验证（改密码、删账号要重新输密码）
+
+  □ HTTPS 强制（生产环境必须，否则 token 明文传输）
+    ★ 一般在 Nginx 层配置。
+
+  □ 安全响应头
+    X-Content-Type-Options: nosniff
+    X-Frame-Options: DENY
+    Strict-Transport-Security: max-age=31536000
+    Content-Security-Policy: ...
+
+  □ 依赖漏洞扫描
+    mvn org.owasp:dependency-check-maven:check
+
+  □ 通读 OWASP Top 10
+
+
+################################################################################
+  三、越权检查结果（逐个接口）
+################################################################################
+
+  ------------------------------------------------------------------
+  接口                                     归属校验    结论
+  ------------------------------------------------------------------
+  DELETE /novels/{novelId}/chapters/{id}   ✓ 已校验   chapter.novelId == novelId
+  PUT    /novels/{novelId}/chapters/{id}   ✓ 已校验   同上
+  POST   /novels/{novelId}/chapters        △ 部分     只查了小说存在
+                                                       （管理员接口，风险低）
+  GET    /novels/{novelId}/chapters/{id}   ✓ 已校验   同上
+  GET    /novels/{id}                      —          公开数据，无需校验
+  DELETE /novels/{id}                      —          管理员接口
+  ------------------------------------------------------------------
+
+  ★ 未来加了收藏/书架功能后要特别注意：
+    不要写 collectService.deleteById(collectId) 就完事，
+    必须带上 userId 条件，否则别人能删你的收藏。
+    推荐写法：collectService.deleteByIdAndUserId(collectId, userId)
+              ★ 直接把权限条件写进 SQL，天然防越权
+
+
+################################################################################
+  四、安全自查清单（改完代码跑一遍）
+################################################################################
+
+  【文件上传】
+  □ 传一个 .html 改名成 .png 能传上去吗？（扩展名校验）
+  □ 传一个假图片（内容不是图片）能传上去吗？（magic number 校验）
+  □ 传 15MB 文件，返回的是友好提示还是 500？
+  □ 文件名里带 ../ 能穿越目录吗？
+
+  【认证授权】
+  □ 不带 token 访问受保护接口 → 401？
+  □ 普通用户调管理员接口 → 403？
+  □ 登出后旧 accessToken 还能用吗？
+  □ 登出后旧 refreshToken 还能换新 token 吗？★ 你的答案是不能
+    （登录写 user_refresh，登出删除正反两个索引，refresh 时轮换，
+     由 user_refresh 删除机制保证，是有效防护而非缺口）
+  □ 用伪造签名的 JWT 能通过吗？
+
+  【敏感信息】
+  □ 接口返回里有 passwordHash 吗？
+  □ Redis 里有 passwordHash 吗？★ 有（需修）
+  □ 日志里有密码或完整 token 吗？
+  □ 异常信息里有没有暴露表名/SQL？
+
+  【越权】
+  □ 用 A 用户的 token 能操作 B 用户的数据吗？
+
+
+################################################################################
+  五、面试话术准备
+################################################################################
+
+【Q：你的项目做过哪些安全防护？】
+  ★ 直接用上面那 10 条真实做过的，这是你最强的部分：
+  "主要有几个方面：
+   认证上，密码用 BCrypt 加密存储，登录接口做了 IP 限流防暴力破解，
+   错误提示统一成'用户名或密码错误'防止账号枚举。
+
+   权限上，用自定义注解 + 拦截器做 RBAC，
+   普通用户访问管理员接口返回 403；
+   涉及数据归属的接口会校验，比如删除章节时会检查
+   这个章节是否属于该小说，防止水平越权。
+
+   文件上传上，做了路径穿越校验（normalize + startsWith）
+   和 UUID 重命名，避免文件覆盖和目录遍历。
+
+   配置上，数据库密码和 JWT 密钥都走环境变量，
+   生产环境关闭接口文档和 SQL 打印。"
+
+【Q：文件上传只校验 Content-Type 够吗？】
+  "不够。Content-Type 是客户端发来的 HTTP 头，可以随意伪造。
+   要配合扩展名白名单和文件头 magic number 校验，
+   才能真正确认是不是图片。
+   另外如果上传目录可以匿名访问，
+   要防止传一个 HTML 文件进去造成存储型 XSS。"
+
+  ★ 这是一个很好的"我知道我项目的问题在哪"的回答，
+    比假装完美更加分。前提是你要真的知道。
+
+【Q：为什么你的项目关闭了 CSRF？】
+  "因为用的是 JWT 而不是 Cookie。
+   Cookie 会被浏览器自动携带，所以需要 CSRF token 防护；
+   JWT 存在 localStorage，需要 JS 手动加到请求头，
+   攻击者的网站读不到，CSRF 天然不成立。
+   但如果哪天改成 Cookie 存 token，就必须重新开启。"
+
+
+################################################################################
+  六、完成度记录（自己往后追加）
+################################################################################
+
+  日期        变动                                    完成度
+  ------------------------------------------------------------------
+  2026-09-22  初始盘点                                 0/8 官方清单
+              已有 10 项安全实践
+  2026-09-22  定位到 8 处缺口，其中 3 个是真实漏洞       ★ 新增 P0
+  ------------------------------------------------------------------
+  ________    ______________________________________  ________
+
+================================================================================
+                              文件结束
+================================================================================

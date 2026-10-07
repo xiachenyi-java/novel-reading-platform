@@ -1,0 +1,188 @@
+================================================================================
+【项目笔记 · 04】限流防刷
+================================================================================
+  对应知识笔记：docs/知识笔记/04-限流防刷.txt
+  相关代码：common/RateLimitAspect.java、common/annotation/RateLimit.java、
+            common/exception/RateLimitException.java、controller/UserController.java
+
+
+################################################################################
+  一、现状盘点
+################################################################################
+
+【完成度】7/7  ■■■■■■■  约 54%（含进阶项共 13 项）
+
+  ------------------------------------------------------------------
+  步骤   内容                        状态    代码位置
+  ------------------------------------------------------------------
+  01     理解限流原理（固定窗口）    ✓      RateLimitAspect
+  02     给登录接口加限流            ✓      UserController.login
+  03     升级为 AOP 注解式限流       ✓      @RateLimit + @Around
+  04     双 Token 机制设计           ✓      UserService.login
+  05     修改登录返回双 Token        ✓      LoginVO
+  06     新增 /users/refresh 接口    ✓      UserController.refresh
+  07     让 Refresh Token 可远程作废 ✓      UserService 双向索引 + logout 反查
+  ------------------------------------------------------------------
+
+【已实现的限流点】
+  ------------------------------------------------------------------
+  接口                注解配置                      维度
+  ------------------------------------------------------------------
+  /users/register     @RateLimit(key="register",   IP
+                      limit=5, window=60)
+  /users/login        @RateLimit(key="login",      IP
+                      limit=5, window=60)
+  ------------------------------------------------------------------
+
+【技术亮点（面试可以主动讲）】
+
+  ✓ 自定义 @RateLimit 注解 + @Around 环绕通知，限流逻辑与业务代码完全解耦
+  ✓ 用 Redis INCR 做计数，天然支持分布式（多机部署时本地 Map 会算不准）
+  ✓ 客户端真实 IP 提取：依次尝试 X-Forwarded-For、Proxy-Client-IP、
+    WL-Proxy-Client-IP、HTTP_CLIENT_IP、HTTP_X_FORWARDED_FOR，最后回退 getRemoteAddr
+  ✓ 多级代理时取 X-Forwarded-For 的第一个 IP
+  ✓ RateLimitException 走全局异常处理器，返回 HTTP 429
+
+【★ 缺口 2：固定窗口的临界突刺没处理】
+
+  假设限流 5 次/60 秒：
+    第 59 秒发 5 次（窗口 1 的额度用光）
+    第 61 秒发 5 次（窗口 2 的额度刚开始）
+    → 2 秒内实际通过了 10 次，是限制值的 2 倍
+
+  攻击者卡在窗口切换瞬间就能把限流效果翻倍。
+
+【★ 缺口 3：INCR 和 EXPIRE 分两步，非原子】
+
+  代码：
+    Long count = stringRedisTemplate.opsForValue().increment(redisKey);
+    if (count != null && count == 1) {
+        stringRedisTemplate.expire(redisKey, window, TimeUnit.SECONDS);
+    }
+
+  风险：如果 INCR 执行完、EXPIRE 执行前进程崩溃或 Redis 断开，
+        这个 key 就永久存在 → 用户被永久限流。
+
+【★ 缺口 4：X-Forwarded-For 可伪造】
+
+  如果服务直接暴露公网，客户端可以自己加一个假的 X-Forwarded-For 头，
+  每次换一个假 IP 就绕过限流了。
+  生产环境应该由 Nginx 统一设置这个头，并覆盖客户端传的值。
+
+
+################################################################################
+  二、待办清单
+################################################################################
+
+--------------------------------------------------------------------------------
+P0 · 必须做
+--------------------------------------------------------------------------------
+
+  ✅ 第 7 步：让 Refresh Token 真正可远程作废（2026-10-05 已完成）
+    位置：UserService.login() / refresh()
+    做法：登录和刷新时都写 user_refresh 反向索引，登出时反查并删除
+    详见：项目笔记/03-认证授权.txt
+    验证：登出后调 /users/refresh 应返回"刷新令牌已过期或不存在"
+
+--------------------------------------------------------------------------------
+P1 · 应该做
+--------------------------------------------------------------------------------
+
+  □ 修 INCR + EXPIRE 的原子性
+    修法（三选一）：
+      方案一：Lua 脚本把两步合并
+      方案二：用 SET key value EX 60 NX 的思路
+      方案三：给 key 设一个兜底的过期时间
+    ★ 面试如果问"你的限流有什么隐患"，这就是标准答案。
+
+  □ 给上传接口加限流
+    位置：FileController.upload()
+    现状：任何登录用户都能不限次数上传
+    修法：@RateLimit(key = "upload", limit = 10, window = 60)
+
+  □ 触发限流时返回 Retry-After 响应头
+    现状：只返回 429 和 msg，客户端不知道要等多久。
+    修法：在 RateLimitException 里带上窗口剩余时间，
+          GlobalExceptionHandler 里设置 response.setHeader("Retry-After", ...)
+
+--------------------------------------------------------------------------------
+P2 · 可以做（进阶）
+--------------------------------------------------------------------------------
+
+  □ 滑动窗口限流（解决临界突刺）
+    实现：用 ZSet 存每次请求的时间戳
+          ZREMRANGEBYSCORE 删掉窗口外的
+          ZCARD 统计当前窗口内的数量
+          ZADD 记录本次请求
+    ★ 正好复用你排行榜学的 ZSet。
+
+  □ 令牌桶算法
+    实现：Guava RateLimiter（单机）或 Redisson RRateLimiter（分布式）
+    适用：需要允许突发流量的场景
+
+  □ 限流维度扩展
+    现状：只有 IP 维度
+    扩展：IP / 用户ID / 接口 / 全局
+    实现：@RateLimit 注解加一个 dimension 属性，Aspect 里根据维度生成不同的 key
+
+  □ 把限流配置化
+    现状：limit 和 window 写死在注解里
+    改进：支持从配置文件读取（如 @RateLimit(key="login", limit="${...}")）
+
+  □ 限流触发告警
+    动机：如果某个 IP 持续触发限流，说明有人在攻击。
+    做法：触发时打 warn 日志 + 计数，超过阈值发通知（见 12-可观测性）
+
+
+################################################################################
+  三、关键实现速查
+################################################################################
+
+【注解定义】
+  @Target(ElementType.METHOD)
+  @Retention(RetentionPolicy.RUNTIME)
+  public @interface RateLimit {
+      String key();
+      int limit() default 5;
+      int window() default 60;
+  }
+
+【切面核心逻辑】
+  @Around("@annotation(rateLimit)")
+  public Object around(ProceedingJoinPoint point, RateLimit rateLimit) throws Throwable {
+      String redisKey = "rate_limit:" + rateLimit.key() + ":" + getClientIp();
+      Long count = stringRedisTemplate.opsForValue().increment(redisKey);
+      if (count != null && count == 1) {
+          stringRedisTemplate.expire(redisKey, rateLimit.window(), TimeUnit.SECONDS);
+      }
+      if (count != null && count > rateLimit.limit()) {
+          throw new RateLimitException("请求过于频繁，请稍后再试");
+      }
+      return point.proceed();
+  }
+
+【Redis Key 格式】
+  rate_limit:{业务key}:{ip}
+  例：rate_limit:login:192.168.1.100
+
+【异常处理链路】
+  RateLimitAspect 抛 RateLimitException
+      → GlobalExceptionHandler.handleRateLimit()
+      → @ResponseStatus(HttpStatus.TOO_MANY_REQUESTS)  → HTTP 429
+      → Result.error(429, "请求过于频繁，请稍后再试")
+
+
+################################################################################
+  四、完成度记录（自己往后追加）
+################################################################################
+
+  日期        变动                                    完成度
+  ------------------------------------------------------------------
+  2026-09-22  初始盘点                                 6/7 主体步骤
+  2026-09-22  定位到第7步未生效 + 3 个算法隐患          ★ 新增 P1
+  ------------------------------------------------------------------
+  ________    ______________________________________  ________
+
+================================================================================
+                              文件结束
+================================================================================

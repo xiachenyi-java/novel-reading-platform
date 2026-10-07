@@ -1,0 +1,957 @@
+================================================================================
+              项目说明 · 给 AI 助手（交接 / 上下文文档）
+                          小说管理系统
+                    最后更新：2026-10-06
+================================================================================
+
+【这份文档是干什么的】
+  让下一个接手这个项目的 AI 助手，在**不读完全部代码**的情况下，
+  快速理解：项目是什么、怎么设计的、有哪些约定、哪些地方有坑。
+
+【★★ 先看这一条：你还有一份"行为守则"】
+  这份文档讲的是"**项目是什么**"（事实）。
+  另有一份 docs/系统提示词-给AI.txt 讲的是"**AI 该怎么干活**"（纪律）：
+    角色定位 / 双轨制全局视图 / 关键设计决策速查 /
+    ★ 验证文化（6 条）/ 交互约束 / 改完代码的同步职责
+  ★ 两份是互补的，建议都提供给 AI。
+    只知道项目事实但不知道纪律，AI 会跑偏成"改完让你试试"。
+
+【★ 给 AI 的第一条指令】
+  这个项目的主人（夏辰义）是**大四学生，正在学习 Java 后端**。
+  他的核心诉求不是"最快改完"，而是**"从改动中学到东西"**。
+
+  所以：
+    · 改代码时，要解释「为什么这么改」和「这么改能学到什么」
+    · 发现他代码里的问题时，说明「问题是什么、为什么会出错、怎么验证修好了」
+    · 不要一次改一大堆，一次一个点，让他能跟上
+    · ★ 他明确说过「你不要改我的东西了」—— 改动前先说明意图，等他确认
+
+【配套文档】
+  ★ 系统提示词-给AI.txt  ★ AI 行为守则（角色、纪律、约束）—— 和这份互补
+  docs/知识笔记/    纯知识（原理、面试题）—— 13 个大类
+  docs/项目笔记/    项目状态（现状、待办）—— 13 个大类，与知识笔记一一对应
+  docs/实战笔记/    ★ 实战复盘（怎么做、怎么验证、踩了什么坑）
+  docs/面试题库/    ★ 面试题库（按分类，每题带加分点/陷阱/追问链）
+  docs/简历能力.txt 简历能写什么 + 面试话术索引
+  docs/Java学习路线-从0开始.txt  长期学习地图
+  docs/上线与运营路线.txt  ★ 轨道 B（运营轨）操作手册：服务器选型、备案、
+                            部署演练、监控备份、成本、上线判据 A/B/C
+
+
+################################################################################
+  一、项目是什么
+################################################################################
+
+【一句话】
+  基于 Spring Boot 的小说阅读平台，前后端分离。
+  管理员发布小说和章节，读者浏览、搜索、阅读。
+
+【性质】
+  个人学习项目 / 简历项目。目标不是上线运营，而是把 Java 后端知识点串成线。
+
+【规模】（★ 2026-10-05 实测核实，旧文档里的 38/2000/19/9 都是错的）
+  · 后端：37 个 Java 类，2055 行代码，16 个 REST 接口
+  · 测试：12 个测试用例，./mvnw test 连跑两遍稳定全绿（判据 B 已达标）
+  · 前端：8 个 Vue 组件
+  · 数据库：3 张表（user / novel / chapter）
+  · Redis：7 类 key（认证、限流、排行榜、缓存）+ 2 个 Spring Cache 区域
+          （novel / novel-null）
+
+
+################################################################################
+  二、技术栈（精确版本，改动前务必确认）
+################################################################################
+
+  ------------------------------------------------------------------
+  层            技术及版本                      备注
+  ------------------------------------------------------------------
+  语言          Java 25                        pom: java.version=25
+  框架          Spring Boot 4.1.0              父 POM
+  持久层        Spring Data JPA + Hibernate    MySQL 8.0
+  缓存          Redis + Spring Cache           StringRedisTemplate / @Cacheable
+  认证          jjwt 0.12.3                    JWT
+  密码          BCrypt                         spring-boot-starter-security 提供
+  接口文档      knife4j-openapi3-boot4 5.2.4   访问 /doc.html
+  工具          Lombok / Spring AOP / AspectJ
+  构建          Maven 3.9.16（wrapper）        ./mvnw
+  容器          Docker + Docker Compose        两阶段构建
+  前端          Vue 3 + Vite + Element Plus + Pinia + axios
+  ------------------------------------------------------------------
+
+  【★ 三个必须知道的版本坑】
+
+  1. Lombok 必须用 1.18.46（Spring Boot 4.1 管理的版本）
+     × 1.18.36 及以下不支持 JDK 25，会报：
+       ExceptionInInitializerError: com.sun.tools.javac.code.TypeTag :: UNKNOWN
+     ★ 最佳做法：pom 里**不要写** <lombok.version>，让 Boot 的 BOM 管理
+     ⚠ 现状不一致：pom.xml 第 35 行**确实写了** <lombok.version>1.18.46</lombok.version>。
+       值恰好等于 BOM 管理的版本，所以目前无害；但 Boot 升级后它会把 Lombok
+       钉死在 1.18.46。建议删掉这一行（annotationProcessorPaths 里的
+       ${lombok.version} 仍能从 Boot 的 BOM 解析到）
+
+  2. pom 里必须有 annotationProcessorPaths 配置
+     JDK 23+ 默认不再自动运行 classpath 上的注解处理器，
+     不配的话 Lombok 完全不生效，报一堆"找不到符号 getXxx()"
+
+  3. 本机 JAVA_HOME 必须指向 JDK 25
+     ★ Windows 环境变量改动不会传播到已运行的进程，
+       改完要重启终端 / IDEA
+
+
+################################################################################
+  三、目录结构
+################################################################################
+
+  后端（src/main/java/com/example2/demo2/）
+  │
+  ├── Demo2Application.java              启动类
+  │
+  ├── common/                            横切关注点
+  │   ├── Result.java                    ★ 统一响应 {code, msg, data}
+  │   ├── GlobalExceptionHandler.java    ★ 全局异常处理
+  │   ├── JwtUtil.java                   JWT 生成/解析
+  │   ├── UserContext.java               ★ ThreadLocal 存当前用户
+  │   ├── RateLimitAspect.java           @RateLimit 切面
+  │   ├── annotation/
+  │   │   ├── RateLimit.java             限流注解（key/limit/window）
+  │   │   └── RequireAdmin.java          管理员权限注解
+  │   └── exception/
+  │       ├── BusinessException.java     业务异常（warn 级别）
+  │       └── RateLimitException.java    限流异常（返回 429）
+  │
+  ├── config/
+  │   ├── SecurityConfig.java            BCrypt Bean + 放行所有请求
+  │   ├── LoginInterceptor.java          ★★ 认证/鉴权核心
+  │   ├── WebConfig.java                 注册拦截器 + /uploads 静态映射
+  │   ├── CorsConfig.java                只允许 localhost:5173
+  │   └── CacheConfig.java               ★ RedisCacheManager + CacheErrorHandler
+  │                                      （★ JacksonConfig 已删除，见问题区 11）
+  │
+  ├── controller/
+  │   ├── UserController.java            注册/登录/登出/刷新
+  │   ├── NovelController.java           ★ 小说 + 章节的所有接口
+  │   └── FileController.java            封面上传
+  │
+  ├── service/
+  │   ├── UserService.java               认证逻辑
+  │   ├── INovelService.java             ★ 小说服务接口
+  │   └── NovelServiceIml.java           ★ 小说服务实现（核心业务）
+  │
+  ├── repository/
+  │   ├── UserRepository.java            findByUsername
+  │   ├── NovelRepository.java           ★ JpaRepository + JpaSpecificationExecutor
+  │   ├── ChapterRepository.java         findByNovelIdOrderByChapterNumberAsc 等
+  │   └── NovelSpecifications.java       ★ 动态查询条件构造器
+  │
+  ├── entity/
+  │   ├── User.java                      id / username / passwordHash / role
+  │   ├── Novel.java                     ★ 带 @Table(indexes=...) 声明索引
+  │   └── Chapter.java                   ★ 带 @Table(indexes=...) 声明索引
+  │
+  ├── dto/                               入参（带校验注解）
+  │   ├── LoginDTO / UserRegisterDTO / RefreshTokenDTO
+  │   ├── NovelDTO                       title/summary/category/coverUrl 全 @NotBlank
+  │   ├── ChapterDTO                     title/content
+  │   └── UserContextDTO                 放 ThreadLocal 的用户信息
+  │
+  └── vo/                                出参
+      ├── LoginVO                        token / refreshToken / userInfo
+      ├── NovelDetailVO                  详情 + 章节目录（★ 不带正文）
+      └── NovelRankVO                    排行榜条目
+
+  前端（novel-frontend/）
+  ├── src/api/index.js                   ★ axios 实例（自动带 Token，401 跳登录）
+  ├── src/api/novel.js                   列表/详情/章节CRUD/上传/排行榜
+  ├── src/api/user.js                    登录/注册
+  ├── src/router/index.js                8 条路由，/shelf 和 /write 需登录
+  └── src/views/
+      ├── NovelListView.vue              ★ 书城首页（服务端分页+搜索+分类）
+      ├── NovelDetailView.vue            详情 + 目录 + 管理员操作
+      ├── ChapterReadView.vue            阅读器 + 上下章
+      ├── RankingView.vue                排行榜（总榜/日榜）
+      ├── LoginView.vue / RegisterView.vue
+      ├── WriteNovel.vue                 发布小说
+      └── MyShelf.vue                    ★ 空壳，只有一行字
+
+
+################################################################################
+  四、关键设计决策（★ 改动前必读，这些是有意为之的）
+################################################################################
+
+--------------------------------------------------------------------------------
+决策 1：Novel 和 Chapter 用 novelId 手动关联，不用 @OneToMany
+--------------------------------------------------------------------------------
+  【做法】Chapter 里就一个普通字段 `private Integer novelId;`
+  【为什么】用 @OneToMany 的话，查小说时会把所有章节的正文一起加载出来 ——
+            一本 500 章的小说正文可能几十 MB
+  【代价】失去级联便利，删除小说要手写 chapterRepository.deleteByNovelId(id)
+  【改的时候注意】不要"顺手"改成关联注解，会引发性能问题
+
+--------------------------------------------------------------------------------
+决策 2：novel.totalWords 是冗余字段
+--------------------------------------------------------------------------------
+  【做法】总字数单独存一列，而不是每次 SUM(chapter.word_count)
+  【为什么】小说列表是最高频接口，实时算要 JOIN + 聚合
+  【★ 代价】三个地方必须同步维护，漏一处就数据不一致：
+            · addChapter    → totalWords += wordCount
+            · updateChapter → totalWords += (新字数 - 旧字数)
+            · deleteChapter → totalWords -= wordCount
+  【改的时候注意】任何改变章节字数的操作，都要同步改 totalWords
+
+--------------------------------------------------------------------------------
+决策 3：Token 黑名单用 Redis Hash，不用 Set
+--------------------------------------------------------------------------------
+  【结构】blacklist:user:{userId}  →  Hash{ token: 过期时间戳 }
+  【为什么不用 Set】Set 只存 token，没存过期时间，不知道何时能清理
+  【清理机制】读取时惰性清理过期的 field
+  【★ 遗留问题】整个 Hash key 没有兜底 TTL，用户登出后不再访问就永久驻留
+
+--------------------------------------------------------------------------------
+决策 4：Refresh Token 做双向索引
+--------------------------------------------------------------------------------
+  【正向】refresh_token:{token} → userId   用途：刷新时查是哪个用户
+  【反向】user_refresh:{userId} → token    用途：登出时查要删哪个 token
+  【为什么】两个方向都会用到，只存单向登出就删不掉 Refresh Token
+  【★ 遗留问题】String 结构只存一个 token，**多设备登录会互相覆盖**
+               （见"已知问题"区）
+
+--------------------------------------------------------------------------------
+决策 5：搜索/筛选用 Specification，不用方法名推导
+--------------------------------------------------------------------------------
+  【做法】NovelSpecifications 里每个条件一个静态方法，
+          条件为空返回 null（Spring Data 自动忽略）
+  【为什么】3 个可选条件用方法名推导要写 2³ = 8 个方法
+  【★ 参数顺序】Controller → Service → Specifications 三处必须一致：
+                page, size, category, status, keyword
+
+--------------------------------------------------------------------------------
+决策 6：索引用 @Table(indexes=...) 声明，不手写 SQL
+--------------------------------------------------------------------------------
+  【做法】实体类上 @Table(name="novel", indexes = {@Index(...)})
+  【为什么】索引定义跟代码走，换机器 / 重建表会自动创建
+  【注意】columnList 写 **Java 属性名**（如 lastUpdateTime），
+          Hibernate 会自动翻译成列名（last_update_time）
+
+--------------------------------------------------------------------------------
+决策 7：缓存降级（CacheErrorHandler）
+--------------------------------------------------------------------------------
+  【做法】CacheConfig 实现 CachingConfigurer，自定义 errorHandler
+  【为什么】@Cacheable 让 Redis 从"可选依赖"变成"强依赖"，
+            Redis 一挂详情页就打不开
+  【效果】缓存读写失败只记 warn 日志，请求降级直查数据库
+  【★ 局限】CacheErrorHandler 只保护 @Cacheable/@CacheEvict 注解，
+            **保护不了手写调用**（stringRedisTemplate 或 cacheManager.getCache()）
+            ⇒ 手写的地方必须自己 try-catch
+
+  【✅ 当前状态：已修复（2026-10-06）】
+    findDetail 为了做空值缓存（决策 10）改成了手动 cacheManager 调用，
+    CacheErrorHandler 因此一度失效。现已用 try-catch 手动补回降级。
+    完整修复过程 → docs/实战笔记/05-缓存三大问题实战.txt 第四节
+
+  【★★★ 下面这段是最有价值的教训，别删 —— "改动引入回归"的典型案例】
+
+    ── 为什么 CacheErrorHandler 会失效 ──
+      CacheErrorHandler 由 AbstractCacheInvoker 调用，而它是
+      CacheAspectSupport（AOP 拦截器）的父类。
+      只有**注解驱动**的调用才经过拦截器；
+      手动 cache.get() 直接进 RedisCache，没有 try/catch 兜底。
+      ★ 一句话：**"注解生效" = "框架的切面拦住了你"。**
+        绕开切面（改手写 API），切面提供的所有附加能力都会消失。
+      ★ 推广（AOP 通用规律）：
+          @Cacheable     → CacheInterceptor       → 丢失：缓存降级
+          @Transactional → TransactionInterceptor → 丢失：事务回滚、传播
+          @RateLimit     → RateLimitAspect        → 丢失：限流计数
+          @RequireAdmin  → LoginInterceptor       → 丢失：权限校验
+
+    ── ★★ 失败方式比"500"更糟：挂起 vs 快速失败 ──
+      当时项目没配 spring.data.redis.timeout → 用 Lettuce 默认 60 秒命令超时。
+      不是"快速失败"，而是每个请求占着 Tomcat 线程卡满 60 秒。
+      Redis 一挂 + 请求量稍大 → 线程池被占满 → 连不依赖 Redis 的
+      列表接口也开始排队 → 级联故障。
+      ★ 结论：**挂起（hang）几乎总是比报错（fail fast）更危险**，
+        因为挂起会消耗资源并向上游传播，报错可以被隔离。
+
+    ── ★★★ 判据修正（旧判据是错的，会给假阳性）──
+      旧判据："返回 200 = 降级有效 / 返回 500 = 降级失效"。**这是错的。**
+      原因：GlobalExceptionHandler.handleRuntimeException 没有 @ResponseStatus，
+      所有 RuntimeException 都返回 HTTP 200。
+      ⇒ 按旧判据跑，失败也会被读成"✅ 降级仍然有效"。
+      正确判据：看 **body 里的 code 字段**
+        · body {"code":200, ...有数据}                        → 降级有效
+        · body {"code":500,"msg":"Redis command timed out"}   → 降级失效
+      ★ 通用教训：**判据本身也要验证** ——
+        假阳性判据比没有判据更危险，因为它会让你以为已经验证过了。
+
+  【✅ 修复方案（已实施）】
+
+    ── 第一级：超时（止血）—— application-dev.properties ──
+      spring.data.redis.timeout=500ms
+      spring.data.redis.connect-timeout=500ms
+      ★ 两个都要配：connect-timeout 管建立 TCP 连接，
+        timeout 管命令发出后等响应。Redis 端口不通时走前者。
+
+    ── 第二级：try-catch（治疗）—— NovelServiceIml.findDetail ──
+      4 处 Redis 调用各包 try-catch：
+        ① nullCache.get()   ② novelCache.get()
+        ③ nullCache.put()   ④ novelCache.put()
+      · 读失败 → 降级为"缓存未命中"，继续走 DB（**不要 rethrow**）
+      · 写失败 → 吞掉异常，不影响主流程（缓存是加速器，不是必需品）
+      · catch 里打 log.warn，只打 message 不打堆栈（避免刷屏）
+
+  【✅ 三阶段实测数据（2026-10-06，简历素材）】
+
+    ── 演练方法 ──
+       docker stop demo2-redis
+       curl "http://localhost:8080/novels/1"
+       docker start demo2-redis
+
+    ------------------------------------------------------------------
+    阶段                  耗时        HTTP   body.code   接口可用性
+    ------------------------------------------------------------------
+    ① 改造前（60s 超时）  60.0s 挂起  200    500         ❌ 打不开
+    ② 只加超时配置        0.51s       200    500         ❌ 打不开
+    ③ 再加 try-catch      1.01s       200    200         ✅ 有数据
+    ------------------------------------------------------------------
+
+    ★ ②→③ 才是真正的修复。② 只是 fail fast（快速失败），
+      ③ 才是 graceful degradation（优雅降级）。
+      ★ 只做 ② 的话，用户体感是"从一直转圈变成立刻报错"，**还是不可用**。
+
+    ── 并发压测（500 请求 / 100 并发 / Redis 挂）──
+      /novels/1    ：P50 1.491s，P95 2.575s，最大 2.784s，0 个超 5 秒
+      /novels 列表 ：P50 0.248s，全程 200（不依赖 Redis，未被拖垮）
+      ⇒ 级联故障被切断
+
+  【★ 附带发现：Lettuce 断连时会缓冲写命令（2026-10-06）】
+    演练时发现"详情缓存写入失败"的 warn **一次都没触发**。
+    做了个决定性实验：重启 Redis 后**不发任何请求**，直接查
+      docker exec demo2-redis redis-cli EXISTS "novel::1"  → 1
+    → Lettuce 在断连期间把写命令缓冲了起来，重连后自动补发。
+
+    ★ 影响：
+      · 那两个 put 的 catch 在当前场景下永远不会触发
+        （保留仍是对的，是防御其他故障模式的安全网）
+      · disconnectedBufferSize 默认 64KB，缓冲满了才会真正失败
+        → "Redis 挂了"对**写操作**是**延迟暴露**的
+
+    ★ 本质：**同步 API 掩盖了异步现实**。Lettuce 底层是异步的（Netty），
+      Spring Data Redis 包了一层同步 API，connection.set() 返回 **void**。
+      **"没有返回值的远程调用，等于没有错误处理。"**
+
+--------------------------------------------------------------------------------
+决策 8：LoginInterceptor 三态设计
+--------------------------------------------------------------------------------
+  【第一态】OPTIONS 预检请求 → 直接放行
+  【第二态】游客路径（GET + 路径以 /novels 开头）→ 宽松，有 token 就解析
+  【第三态】其他所有路径 → 严格，无 token / 解析失败 / 在黑名单 → 401
+  【★ 权限检查也在拦截器里】它比过滤器多一个能力：能拿到 HandlerMethod，
+                            所以能读方法上的 @RequireAdmin 注解
+
+--------------------------------------------------------------------------------
+决策 9：@RequireAdmin 加在 Controller 方法上，不是 Service 上
+--------------------------------------------------------------------------------
+  【★ 重要】拦截器检查的是 HandlerMethod（Controller 方法），
+            Service 方法上的注解它**看不到**。
+            所以 Service 层加 @RequireAdmin 是无效的装饰品。
+
+--------------------------------------------------------------------------------
+决策 10：空值缓存防穿透（2026-10-05 新增）
+--------------------------------------------------------------------------------
+  【要解决的问题】
+    查询一个不存在的 id（如 /novels/999999）时，缓存永远不命中，
+    每次请求都打到数据库 —— 这就是**缓存穿透**。
+
+  【做法】用独立的缓存区域 novel-null 存"查过、但确实没有"的标记：
+    · CacheConfig 里给 novel-null 单独设 **5 分钟** TTL
+    · NovelServiceIml.findDetail 改成三分支判断：
+        ① 命中 novel-null   → 直接抛"小说不存在"，不查库
+        ② 命中 novel        → 直接返回
+        ③ 都没命中          → 查库；库中也没有就写 novel-null 再抛异常
+    · addNovel 上加 @CacheEvict(value = "novel-null", key = "#result.id")
+        ★ 为什么需要这一手：空表时查过 /novels/1 会被缓存成 null，
+          而新增的第一本小说正好拿到 id=1 —— 不清就会 5 分钟内显示"不存在"
+
+  【为什么用独立区域，不混在 novel 里】
+    空值和真实数据的生命周期完全不同：
+      · 真实小说：可以缓存 30 分钟
+      · 空值：只该缓存几分钟（万一数据后来又真的出现了）
+
+  【★ 三件套完成情况（2026-10-07 更新）】
+    · 缓存雪崩（大量 key 同时过期）→ TTL 随机抖动 ✓
+      CacheConfig 的 TtlFunction（每次 put 求值），1500~2100 秒
+    · 缓存击穿（热点 key 失效瞬间，并发请求同时打 DB）→ 本地互斥锁 ✓
+      NovelServiceIml.findDetail：ConcurrentHashMap<Integer,Object> +
+      synchronized + 双重检查（锁内重读缓存）
+      ★ 遗留：① locks 只增不减（无界增长，内存泄漏隐患）
+              ② 这是**单机锁**，多实例部署时每个 JVM 仍各查一次库
+    详见 docs/项目笔记/05-缓存体系.txt
+
+  【交互影响】✅ 已处理（2026-10-06）。这次改动把 @Cacheable 换成了手动调用，
+              一度打掉了缓存降级（手动调用绕过 AOP 切面）；
+              现已用 try-catch 手动补回。
+              ★ 完整过程 + 三阶段实测数据见决策 7。
+
+
+################################################################################
+  五、数据模型
+################################################################################
+
+  user
+    id            INT PK AUTO_INCREMENT
+    username      VARCHAR(255) NOT NULL UNIQUE
+    password_hash VARCHAR(60)  NOT NULL        BCrypt
+    role          VARCHAR(255) NOT NULL        默认 "USER"，管理员是 "ADMIN"
+
+  novel
+    id               INT PK AUTO_INCREMENT
+    title            VARCHAR(255) NOT NULL
+    summary          VARCHAR(2000)
+    cover_url        VARCHAR(255)
+    category         VARCHAR(255) NOT NULL     自由文本，不是枚举
+    status           VARCHAR(255) NOT NULL     "ONGOING" / "FINISHED"
+    total_words      INT                       冗余字段（见决策 2）
+    last_update_time DATETIME(6) NOT NULL      @PrePersist / @PreUpdate 自动维护
+    索引：PRIMARY(id)
+          idx_novel_last_update_time (last_update_time)
+          idx_novel_category_last_update_time (category, last_update_time)
+
+  chapter
+    id             INT PK AUTO_INCREMENT
+    novel_id       INT NOT NULL                手动关联，无外键约束
+    chapter_number INT NOT NULL
+    title          VARCHAR(255) NOT NULL
+    content        LONGTEXT NOT NULL           正文，详情接口不返回
+    word_count     INT NOT NULL
+    create_time    DATETIME(6) NOT NULL        @PrePersist 自动填
+    索引：PRIMARY(id)
+          idx_chapter_novel_number (novel_id, chapter_number)
+
+  ★ 时间字段用 @PrePersist / @PreUpdate 自动维护，
+    不要在 Service 里手写 setCreateTime(LocalDateTime.now())
+
+
+################################################################################
+  六、接口清单
+################################################################################
+
+  【用户模块 /users】
+  ------------------------------------------------------------------
+  方法   路径              权限    限流          说明
+  ------------------------------------------------------------------
+  POST   /users/register   公开    5次/60秒/IP   注册
+  POST   /users/login      公开    5次/60秒/IP   登录，返回双 Token
+  POST   /users/logout     需登录  —             登出（拉黑 token）
+  POST   /users/refresh    公开    —             用 refreshToken 换新 token
+  ------------------------------------------------------------------
+
+  【小说模块 /novels】
+  ------------------------------------------------------------------
+  方法   路径                              权限    说明
+  ------------------------------------------------------------------
+  POST   /novels                           管理员  创建小说
+  PUT    /novels/{id}                      管理员  修改小说
+  DELETE /novels/{id}                      管理员  删除小说（级联删章节）
+  POST   /novels/{novelId}/chapters        管理员  发布章节
+  PUT    /novels/{novelId}/chapters/{cid}  管理员  修改章节
+  DELETE /novels/{novelId}/chapters/{cid}  管理员  删除章节（含章节号重排）
+  GET    /novels                           游客    列表
+                                                  参数 page/size/category/
+                                                       status/keyword（后三可选）
+  GET    /novels/categories                游客    获取全部分类（DISTINCT）
+  GET    /novels/{id}                      游客    详情 + 章节目录
+  GET    /novels/{novelId}/chapters/{cid}  游客    阅读章节（会加热度）
+  GET    /novels/ranking                   游客    排行榜（top + type=total|daily）
+  ------------------------------------------------------------------
+
+  【文件模块 /upload】
+  ------------------------------------------------------------------
+  POST   /upload                           需登录  上传封面图
+  ------------------------------------------------------------------
+
+  【统一响应格式】
+    { "code": 200, "msg": "success", "data": ... }
+    · code 200 = 成功，500 = 业务/系统异常
+    · ★ 业务异常返回 HTTP 200 + body code 500（团队约定，非标准 RESTful）
+    · 401 / 403 / 429 会同时设置对应的 HTTP 状态码
+
+
+################################################################################
+  七、缓存与 Redis Key 全景
+################################################################################
+
+  ------------------------------------------------------------------
+  Key                            类型      TTL      用途
+  ------------------------------------------------------------------
+  refresh_token:{uuid}           String    7天      refreshToken → userId
+  user_refresh:{userId}          String    7天      userId → refreshToken
+  blacklist:user:{userId}        Hash      无★      field=token, value=过期时间戳
+  user:info:{userId}             String    30分     用户信息缓存
+  rate_limit:{key}:{ip}          String    window秒 限流计数
+  ranking:novel:total            ZSET      无       总榜热度
+  ranking:novel:day:{yyyyMMdd}   ZSET      2天      日榜热度
+  ------------------------------------------------------------------
+
+  【Spring Cache 用的 key】（★ 2026-10-05 起有两个缓存区）
+    ------------------------------------------------------------------
+    缓存区          实际 key 形如              TTL       用途
+    ------------------------------------------------------------------
+    novel           novel::{novelId}          30 分钟   小说详情缓存
+    novel-null      novel-null::{novelId}     5 分钟    ★ 防穿透：存"查过
+                                                          但不存在的"标记
+    ------------------------------------------------------------------
+
+    ★ novel-null 是新的，详见决策 10。
+    ★ findDetail 现在用手动 cacheManager 调用读写这两个区，
+      不再用 @Cacheable —— 这带来一个待验证的降级问题，见决策 7 末尾。
+
+  【@CacheEvict 的规律 ★ 重要】
+    凡是会改变 NovelDetailVO 里字段的方法，都必须加 @CacheEvict(value="novel", ...)
+    NovelDetailVO 包含：id/title/summary/coverUrl/category/status/
+                        totalWords/lastUpdateTime/chapters
+
+    当前已加：
+      addChapter      key = "#novelId"    （改了 totalWords 和章节列表）
+      updateChapter   key = "#novelId"
+      deleteChapter   key = "#novelId"
+      deleteNovel     key = "#id"
+      updateNovel     key = "#id"
+
+    ★ 自查方法：写完 key = "#xxx"，回头看方法签名里有没有这个参数名。
+      对不上就会 evict 一个不存在的 key，真正的缓存纹丝不动。
+
+
+################################################################################
+  八、编码约定（改代码时请遵守）
+################################################################################
+
+  【分层】
+    · Controller 不碰数据库，Service 不感知 HTTP
+    · 上层可以调下层，下层绝不能调上层
+    · 依赖接口（INovelService）而不是实现
+
+  【事务】
+    · 所有写操作加 @Transactional(rollbackFor = Exception.class)
+    · 查询方法加 @Transactional(readOnly = true)
+    · ★ 同类内部方法调用会让 @Transactional 失效（AOP 代理问题）
+
+  【参数校验】
+    · DTO 上加 @NotBlank / @Size 等注解
+    · Controller 参数上加 @Valid ← ★ 很容易漏！漏了校验完全不生效
+
+  【权限】
+    · 管理接口加 @RequireAdmin（★ 加在 Controller 方法上）
+    · 涉及数据归属的接口要校验（如 deleteChapter 校验 chapter.novelId）
+
+  【异常】
+    · 业务异常抛 BusinessException（全局处理器返回 warn 级别）
+    · 系统异常让全局兜底（error 级别带堆栈）
+
+  【注释风格】
+    · 中文注释
+    · 类头写作者和日期：
+        /**
+         * 夏辰义
+         * 2026/8/2618:02
+         */
+    · 用 ========== 分隔大段逻辑
+
+  【命名】
+    · 类：大驼峰；方法/变量：小驼峰；包：全小写
+    · Service 实现类命名是 NovelServiceIml（★ 注意是 Iml 不是 Impl，历史遗留）
+
+
+################################################################################
+  九、环境与启动
+################################################################################
+
+  【依赖服务】
+    MySQL    localhost:3306  数据库 book_db  账号 root/123456
+    Redis    localhost:6379  ★ 本地不一定在跑，需确认
+
+  【启动后端】
+    ./mvnw clean compile            # 先确认能编译
+    ./mvnw spring-boot:run          # 或者直接在 IDEA 里跑 Demo2Application
+    # 默认端口 8080（dev profile）
+
+  【启动前端】
+    cd novel-frontend
+    npm install
+    npm run dev                     # 默认 5173，Vite 代理 /api → localhost:8080
+
+  【打包】
+    ./mvnw clean package
+    # ★ 测试已修好（12 个用例连跑两遍全绿），不再需要 -Dmaven.test.skip=true
+
+  【Docker】
+    docker compose up --build
+    # app 映射 8081:80（prod profile 里 server.port=80）
+    # 注意：mysql 没有 healthcheck，app 可能因数据库未就绪而启动失败，
+    #       需要手动 docker compose restart app
+    # ★ 注：Dockerfile 两处已改为 JDK 25（2026-10-06 核对代码），
+    #     原"镜像根本构建不出来"的判断已过期。
+    #     ★ 但仍欠一次 docker compose up --build 实测，别当成已解决。
+
+  【验证接口可用】
+    curl "http://localhost:8080/novels?page=1&size=3"        # 不需要登录
+    curl "http://localhost:8080/novels/categories"
+    # 接口文档：http://localhost:8080/doc.html
+
+
+################################################################################
+  十、已知问题与坑（★ 改动前先看这里）
+################################################################################
+
+  【✅ 2026-10-02 ~ 10-05 已解决（原 🔴 三条 P0 全清）】
+  ~~1. updateNovel 的参数注解与路径不匹配~~
+     → 已改成 @PathVariable（提交 b8e1ceb）
+     ★ 附带教训：这个 bug 能瞒过编译器和 IDE，因为 @RequestParam Integer
+       和 @PathVariable Integer 类型完全一样。编译通过 ≠ 功能正确。
+  ~~2. 拦截器非游客路径的 Redis 查询没有降级~~
+     → 已包 try-catch，Redis 异常时降级为"跳过黑名单检查"+ log.warn
+       （约 LoginInterceptor 110 行）
+  ~~3. 排行榜没有降级~~
+     → 已包 try-catch，异常时返回空列表
+     ★ 顺带把两个 100% 重复的方法抽成了 findRankingByKey（原问题 14）
+  ~~10. 测试类编译不过~~ → 已修，12 个测试连跑两遍全绿
+  ~~14. 两个排行榜方法 100% 重复~~ → 已抽成 findRankingByKey
+
+  【✅ 2026-10-06 已解决】
+
+  ~~0. 缓存降级失效（手动调用绕过 AOP 切面）~~
+     → 已修复：超时配置（止血）+ findDetail 4 处 try-catch（治疗）
+     背景：findDetail 为了做空值缓存，从 @Cacheable 改成了手动
+           cacheManager.getCache("novel").get(...) 调用，
+           绕过了 AOP 切面，CacheErrorHandler 静默失效。
+     验证（docker stop demo2-redis）：
+       · GET /novels/1 → 1.01s → HTTP 200 + body {"code":200, 有数据}
+       · GET /novels   → 不受影响（不依赖 Redis）
+       · 日志出现"空标记读取失败 / 详情缓存读取失败"降级 warn
+     ★ 学习价值：这是"改动引入回归"的典型案例 ——
+       改缓存实现时完全没意识到会影响降级，靠故障演练才发现。
+     ★★ 附带发现：Lettuce 断连时会缓冲写命令、重连后自动补发，
+        所以 put 的 catch 在当前场景下不会触发。
+     完整过程见决策 7 + docs/实战笔记/05-缓存三大问题实战.txt
+
+  【🔴 上线前必须解决】
+
+  ✅ 暂无阻塞项 —— 原 17 号已修（见下）。
+     ★ 但 17 号还欠一次实测，别当成已完成。
+
+  17. ✅【代码已修 · ★ 待实测】Dockerfile 的 JDK 版本与 pom 不匹配
+
+      ── 原问题（2026-10-05 发现）──
+      Dockerfile 第 2 行 / 第 9 行用的是 JDK / JRE **23**：
+        FROM maven:3.9-eclipse-temurin-23-alpine AS builder
+        FROM eclipse-temurin:23-jre-alpine
+      而 pom.xml 第 33 行是 <maven.compiler.release>25</maven.compiler.release>
+      ⇒ JDK 23 无法以 release 25 编译，docker compose up --build 会报
+        "release version 25 not supported" 直接失败。
+
+      ── ✅ 现状（2026-10-06 核对代码）──
+      Dockerfile 两处**都已改成 25**，与 pom 的 release 25 一致：
+        Dockerfile:2   FROM maven:3.9-eclipse-temurin-25-alpine AS builder
+        Dockerfile:9   FROM eclipse-temurin:25-jre-alpine
+
+      ── ★★ 但是：还没实测 ──
+      按本项目验证文化，**没跑过就不能标"已解决"**。
+      下次动 Docker 前补一次：docker compose up --build
+      （这个坑编译器和 IDE 都发现不了，只能靠真跑 —— 和问题 1 同一类）
+
+      ── 背景（值得记住）──
+      升级 Java 25 时只改了 pom，忘了 Dockerfile。
+      ★ 教训：**版本号散落在多个文件里，改一处必须全库搜一遍**：
+        grep -rn "temurin\|java.version\|release>" Dockerfile pom.xml
+
+  【🟠 安全隐患（部署到公网前必须改）】
+
+  4. 上传只校验 Content-Type（客户端可伪造）
+     位置：FileController.upload
+     配合 /uploads/** 匿名静态映射 → 可上传 .html 造成存储型 XSS
+     修法：扩展名白名单 + 文件头 magic number 校验
+
+  5. passwordHash 被写进 Redis 缓存
+     位置：UserService.getCurrentUser
+     修法：缓存前 setPasswordHash(null)，或定义不含该字段的 CacheVO
+
+  6. CorsConfig 硬编码 localhost:5173
+     修法：提到配置文件
+
+  【🟡 数据/性能问题】
+
+  7. 排行榜没有防刷
+     位置：NovelServiceIml.readChapter
+     后果：F5 刷新即加热度，数据是假的
+     修法：同一用户对同一小说 N 分钟只计一次（SETNX）
+
+  8. 搜索的 keyword 没有 trim
+     位置：NovelSpecifications.titleContains
+     后果：输入 " 剑 " 会变成 LIKE '% 剑 %'，匹配不到"剑来"
+
+  9. Refresh Token 多设备会互相覆盖
+     位置：UserService.login / refresh
+     原因：user_refresh:{userId} 是 String，只能存一个 token
+     后果：A 设备登出会删掉 B 设备的 token，且自己没删干净
+     修法：改成 Hash 结构（field=token）或用 Set
+
+  ★ 新增（2026-10-07）：防击穿的 locks Map 只增不减
+     位置：NovelServiceIml.java:51 / 234
+       private final ConcurrentHashMap<Integer,Object> locks = new ConcurrentHashMap<>();
+       Object lock = locks.computeIfAbsent(novelId, k -> new Object());
+     → 访问过的每个 novelId 都永久留一个 Object，无界增长（内存泄漏隐患）
+     ★ 修法有坑：粗暴地 finally locks.remove(novelId) 会重新引入竞态
+       （remove 后到达的线程拿到新锁，和还在等旧锁的线程并发 → 击穿防护被削弱）
+       稳妥方案：换成 Caffeine（weakValues / expireAfterAccess），或 Redisson 分布式锁
+     ★ 同一处还有：单机锁 ≠ 分布式锁（多实例部署时每 JVM 各查一次库）
+
+  【🟢 代码质量问题】
+
+  ~~10. 测试类编译不过~~ → 已修（见第 🔴 区）
+  ~~14. 两个排行榜方法 100% 重复~~ → 已抽成 findRankingByKey
+
+  ~~11. JacksonConfig 用裸 new ObjectMapper() 覆盖了 Boot 的自动配置~~
+    → ★ 已解决：文件已删除（commit 8edf2ac「修复json的版本问题」时清掉）。
+      ★ 现在 UserService 注入的 tools.jackson.databind.ObjectMapper
+        是 Boot 自动配置的 Jackson 3 实例。
+      ★ 注意：其他文档里若还引用 JacksonConfig，都是过期条目。
+
+  12. NovelRankVO 字段名首字母大写
+      private Integer NovelId / Title / CoverUrl / Heat
+      违反命名规范，且 Jackson 序列化出的 key 是 novelId，前端读 item.NovelId 对不上
+
+  13. 前端"免费" tab 是死代码
+      位置：NovelListView.vue 第 11 行
+      原因：isFree 字段在 Novel 实体里不存在，点了等于没筛
+
+  15. 兜底异常用 log.warn 而非 log.error
+      位置：GlobalExceptionHandler.Exception(Exception e)
+      应该：error 级别，"不该发生的事发生了"
+
+  16. 404 被转成了 500
+      实测：PUT /novels/1（不存在的路径）返回
+            HTTP 200 + {"code":500,"msg":"系统繁忙，请稍后再试"}
+      原因：NoResourceFoundException 被兜底处理器捕获
+      修法：单独处理，返回 404
+
+  【🟢 2026-10-05 代码规范化时新发现（共 5 处，尚未修复）】
+    ★ 完整版（含修法、验证方法）见 docs/项目笔记/08-代码质量.txt
+
+    N1. ★ 黑名单过期判断的边界不一致        config/LoginInterceptor.java
+        游客路径用 >=，严格路径用 >（约 69 行 / 116 行）
+        → 同一逻辑两处实现不一致，是将来埋 bug 的典型位置
+        修法：抽成一个私有方法，两处共用
+
+    N2. passwordHash 被写进 Redis 缓存      service/UserService.java
+        getCurrentUser 第 4 步，dbUser 没清密码就序列化写缓存
+        （= 上面的安全隐患 5，只是位置更精确）
+
+    N3. LoginInterceptor 的空 catch 吞异常   config/LoginInterceptor.java
+        游客路径 catch 块（约 83 行），注释说"保持日志干净"
+        → 连"有人用伪造 token 扫描"都发现不了
+        修法：加 log.debug
+
+    ~~N4. 未使用的 import~~ ✅ 已解决（2026-10-07 核对）
+        Cacheable 的 import 已从 NovelServiceIml.java 清掉，
+        现在 import 区只剩 Cache / CacheEvict（后者仍被 6 处 @CacheEvict 使用）。
+
+    N5. 通配符 import                       service/NovelServiceIml.java
+        import java.util.*  → 展开成 6 个具体类
+        ★ 例外：NovelController 里的
+          org.springframework.web.bind.annotation.* 可以保留
+
+  【★ 其他待办】
+    · 缓存击穿 / 缓存雪崩 已于 2026-10-07 完成（见决策 10 末尾）
+    · 缓存与数据库一致性 未做
+    · 分布式锁 未做（当前击穿用的是单机锁）
+
+
+################################################################################
+  十一、常见任务入口（改 X 要去哪）
+################################################################################
+
+  ------------------------------------------------------------------
+  想做什么                          改哪里
+  ------------------------------------------------------------------
+  加一个新接口                      1. INovelService 声明
+                                    2. NovelServiceIml 实现
+                                    3. NovelController 暴露
+                                    4. ★ 如果是管理接口，加 @RequireAdmin
+                                    5. ★ 如果会改 NovelDetailVO 字段，加 @CacheEvict
+
+  改认证 / 鉴权逻辑                 config/LoginInterceptor.java
+                                    common/JwtUtil.java
+
+  改限流规则                        接口上改 @RateLimit 注解参数
+                                    逻辑在 common/RateLimitAspect.java
+
+  改缓存策略                        config/CacheConfig.java（TTL、序列化、降级）
+                                    接口上改 @Cacheable / @CacheEvict
+
+  改搜索 / 筛选条件                 repository/NovelSpecifications.java
+                                    ★ 注意 Controller → Service → Spec 三处参数顺序一致
+
+  改索引                            实体类上的 @Table(indexes=...)
+                                    ★ 不要手写 CREATE INDEX
+
+  加新的 Redis 缓存 / 排行榜        NovelServiceIml.java
+
+  改统一返回格式                    common/Result.java
+  改异常处理                        common/GlobalExceptionHandler.java
+
+  改前端请求封装                    novel-frontend/src/api/*.js
+  改页面                            novel-frontend/src/views/*.vue
+  ------------------------------------------------------------------
+
+
+################################################################################
+  十二、不要做的事（约束）
+################################################################################
+
+  □ 不要用 @OneToMany 关联 Novel 和 Chapter（会加载正文，性能灾难）
+  □ 不要手写 CREATE INDEX —— 用 @Table(indexes=...) 声明
+  □ 不要在 Service 方法上加 @RequireAdmin（拦截器看不到）
+  □ 不要在 Controller 里直接调 Repository
+  □ 不要忘记 @Valid —— 漏了校验完全不生效
+  □ 不要忘记 @CacheEvict —— 改了详情字段不清缓存，前端看到旧数据
+  □ 不要用 Executors 创建线程池（如果以后加异步）
+  □ 不要在日志里打印整个 User 对象（@Data 的 toString 含 passwordHash）
+  □ 不要把 passwordHash 返回给前端或写进缓存
+  □ 不要提交 application-*.properties 里的真实密码
+
+
+################################################################################
+  十三、当前状态快照（2026-10-05）
+################################################################################
+
+  【★ 路线模型变了：从"线性四阶段"改成"双轨制"】
+    详见 docs/项目笔记/00-项目总览.txt 第七节。
+
+      轨道 A · 学习轨（永不结束）—— 13 个大类持续推进
+      轨道 B · 运营轨（上线后开启）—— 服务器/备案/监控/备份/值班
+      上线 = 两条轨道的交汇点，不是终点
+
+    ★ 学习顺序也变了：12 可观测性、13 安全加固 从最后提到**第一梯队**，
+      理由是它们是"运营的刚需"，不是锦上添花。
+
+  【13 个大类进度】
+    ★ 本表已删除（2026-10-06）—— 同一份数字维护两处，必然漂移。
+      13 个大类里曾有 5 处对不上（详见 docs/项目笔记/00-项目总览.txt 第八节末）。
+
+    ★ 唯一权威源 = docs/项目笔记/XX-xxx.txt 首行的【完成度】
+      汇总视图   = docs/项目笔记/00-项目总览.txt 第六节
+
+    ★ 这和 novel.totalWords 是同一个病（冗余字段要同步维护，漏一处就不一致）。
+      区别：代码那边有性能收益，值得付同步成本；
+            文档这边没有任何约束，所以**消除冗余**才是对的解。
+
+  【上线判据（三条全绿才能开始部署演练）】
+    ❌ A  六大类到 70%+  —— 目前 3/6（01 ✓ 03 ✓ 05 ✓；04/07/11 未达）
+                              ★ 05 已于 2026-10-07 达标（10/14 = 71%）
+                              ★ 下一个性价比最高：11 测试体系（差 2 项）
+                              ★ 六大类明细见 docs/项目笔记/00-项目总览.txt 第六节
+                              ★ 各表的具体数字一律以「项目笔记/XX.txt 首行」为准，
+                                本文件、总览文件里的数字都是二手
+    ✅ B  ./mvnw test 可靠跑通  —— ★ 2026-10-03 达标（连跑两遍 12/12）
+    ✅ C  三个 P0 bug 全清  —— ★ 2026-10-02 达标
+
+    ★ 注意：A 未达标，所以现在还不能上线。
+
+    ✅ 原「新增阻塞项」已解除（2026-10-06）：
+       缓存降级曾失效 —— Redis 一挂，详情接口每个请求挂 60 秒，
+       且会级联拖垮整个应用（连不依赖 Redis 的接口也排队）。
+       ★ 现已修复并实测通过：1.01s 返回真实数据；
+         并发压测 500 请求 / 100 并发，0 个超 5 秒，列表接口未被拖垮。
+       见决策 7。
+
+  【最近一次构建状态】（2026-10-05 实测）
+    ./mvnw clean compile                    →  BUILD SUCCESS ✓
+    ./mvnw test（连跑两遍）                  →  12/12 全绿，BUILD SUCCESS ✓
+    ./mvnw clean package（不带 test.skip）   →  可用了（判据 B 达标后不再需要跳过测试）
+
+  【★ 新 AI 接手时的建议第一步】
+    1. 先跑 ./mvnw test 确认测试能过（★ 连跑两遍，跑一遍不算）
+    2. ★★ 确认 MySQL 和 Redis 都在跑。
+       Redis 跑在 Docker 里（容器名 demo2-redis），
+       Docker Desktop 不启动就连不上。
+       症状：测试报 RedisConnectionFailure，
+            接口报 "Unable to connect to Redis"。
+       ★ 别以为是代码问题 —— 2026-10-03 已经因此排查过一次。
+    3. 看 docs/项目笔记/00-项目总览.txt 的第七节，理解双轨制
+    4. ✅ 缓存降级已修复并验证通过（2026-10-06）——
+       三阶段数据：60.0s 挂起 → 0.51s 快速失败 → 1.01s 返回真实数据。
+       ★ 完整过程见 docs/实战笔记/05-缓存三大问题实战.txt
+    5. 然后按 00-项目总览.txt 的「轨道 A · 第一梯队」推进
+       ★ 缓存三件套（穿透 / 击穿 / 雪崩）+ 降级 已全部完成（2026-10-07）；
+         下一个课题：分布式锁（Redisson / SETNX + Lua），
+         正好能练到「10 并发与线程安全」—— 那是当前最大短板。
+
+
+################################################################################
+  十四、和这个项目主人协作的建议
+################################################################################
+
+  【他的学习方式】
+    · 喜欢「先动手看效果，再补原理」
+    · 笔记用 A0 / A1 / A2 版本号标记进度
+    · 每个知识点后面要跟「坑」和「面试会怎么问」
+    · 喜欢用比喻理解（餐厅、银行、游乐园）
+
+  【他希望你怎么回应】
+    · 改代码要说明「为什么这么改」和「这么改能学到什么」
+    · 发现问题时说清「问题是什么 → 为什么错 → 怎么验证修好了」
+    · 给方案时说清「改了哪几个文件、大概多少行」
+    · ★ 不要一次改太多，一次一个点
+    · ★ 动手前先说明意图（他说过"你不要改我的东西了"）
+
+  【他的目标】
+    大四，准备求职 Java 后端。项目是简历项目。
+    最缺的是：并发、测试、JVM —— 这三块面试必问但他还没学。
+    他已经有的优势：索引优化有实测数据、缓存降级做过故障演练。
+
+
+################################################################################
+  十五、配套文档索引
+################################################################################
+
+  docs/
+  ├── 项目说明-给AI.txt              ★ 你正在看的这份（"项目是什么"）
+  ├── 系统提示词-给AI.txt            ★ AI 行为守则（"AI 该怎么干活"）
+  │                                   角色 / 全局视图 / 设计决策速查 /
+  │                                   验证文化 6 条 / 交互约束 / 同步职责
+  │                                   ※ 和这份互补，建议都提供给 AI
+  ├── 简历能力.txt                   简历能写什么 + 面试话术索引
+  ├── Java学习路线-从0开始.txt       长期学习地图（15 个阶段）
+  ├── 上线与运营路线.txt             ★ 轨道 B 操作手册（2026-09-30 新增）
+  │                                   服务器选型 / ICP 备案 / OSS 迁图 /
+  │                                   部署演练清单 / 监控备份 / 成本 / 判据
+  │
+  ├── 知识笔记/                      纯知识：原理、比喻、面试题
+  │   ├── 00-总目录.txt
+  │   └── 01~13-各大类.txt
+  │
+  ├── 项目笔记/                      项目状态：现状盘点、待办清单
+  │   ├── 00-项目总览.txt            ★ 全局状态入口（双轨制路线图在第七节）
+  │   ├── 08-代码质量.txt            ★ N1-N5 五个新发现的问题在这里
+  │   ├── 11-测试体系.txt            ★ 第五节「实战踩坑记录」最值钱
+  │   └── 01~13-各大类.txt
+  │       ※ 编号与知识笔记一一对应
+  │
+  ├── 实战笔记/                      ★ 第三种体裁（2026-10-06 新增）
+  │   └── 05-缓存三大问题实战.txt
+  │       · 三阶段实测数据（60.0s → 0.51s → 1.01s）
+  │       · ★ Lettuce 断连缓冲写命令的实验（别处查不到）
+  │       · 13 条踩坑清单 + 4 条核心认知
+  │
+  └── 面试题库/                      ★ 持续累积（2026-10-06 新增）
+      ├── 00-总目录.txt              分类索引 + 高频追问排行 + 硬素材速查
+      ├── 01-缓存体系.txt            12 题（含「怎么证明降级真的生效了」）
+      └── 02-工程实践与排错.txt      7 题（验证方法论 / 压测 / Lost Update）
+
+  【四个笔记目录的分工 ★ 别搞混】
+    知识笔记/   "是什么"（原理）        —— 学的时候看
+    项目笔记/   "做到哪了"（现状待办）  —— 推进的时候看
+    实战笔记/   "我怎么做的、怎么验证的" —— 面试前看
+    面试题库/   "被追问时怎么答"        —— 面试前看
+
+================================================================================
+                              文件结束
+================================================================================
