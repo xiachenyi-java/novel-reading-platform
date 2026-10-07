@@ -30,6 +30,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -47,6 +48,7 @@ public class NovelServiceIml implements INovelService {
     private final ChapterRepository chapterRepository;
     private final StringRedisTemplate stringRedisTemplate;
     private final CacheManager cacheManager;
+    private final ConcurrentHashMap<Integer,Object> locks = new ConcurrentHashMap<>();
 
     // ========== 1. 创建小说 ==========
     @Override
@@ -229,49 +231,70 @@ public class NovelServiceIml implements INovelService {
             return cached;
         }
 
-        Optional<Novel> opt = novelRepository.findById(novelId);
-        // 数据库也没有：写入空值缓存后抛异常
-        if (opt.isEmpty()) {
+        Object lock =locks.computeIfAbsent(novelId, k -> new Object());
+        synchronized (lock) {
+            Object nullMark2 = null;
             try {
-                nullCache.put(novelId, Boolean.TRUE);
+                nullMark2 = nullCache.get(novelId);
             } catch (Exception e) {
-                log.warn("空标记写入失败，忽略。novelId={}, err={}", novelId, e.getMessage());
+                log.warn("空标记读取失败，降级。novelId={}, err={}", novelId, e.getMessage());
             }
-            throw new BusinessException("小说不存在");
+            NovelDetailVO cached2 = null;
+            try {
+                cached2 = novelCache.get(novelId, NovelDetailVO.class);
+            } catch (Exception e) {
+                log.warn("详情缓存读取失败，降级。novelId={}, err={}", novelId, e.getMessage());
+            }
+            if (nullMark2 != null){
+                throw new BusinessException("小说不存在");
+            }
+            if (cached2 != null) {
+                return cached2;
+            }
+            Optional<Novel> opt = novelRepository.findById(novelId);
+            // 数据库也没有：写入空值缓存后抛异常
+            if (opt.isEmpty()) {
+                try {
+                    nullCache.put(novelId, Boolean.TRUE);
+                } catch (Exception e) {
+                    log.warn("空标记写入失败，忽略。novelId={}, err={}", novelId, e.getMessage());
+                }
+                throw new BusinessException("小说不存在");
+            }
+
+            Novel novel = opt.get();
+            List<Chapter> chapters = chapterRepository.findByNovelIdOrderByChapterNumberAsc(novelId);
+
+            // 组装 VO
+            NovelDetailVO vo = new NovelDetailVO();
+            vo.setId(novel.getId());
+            vo.setTitle(novel.getTitle());
+            vo.setSummary(novel.getSummary());
+            vo.setCoverUrl(novel.getCoverUrl());
+            vo.setCategory(novel.getCategory());
+            vo.setStatus(novel.getStatus());
+            vo.setTotalWords(novel.getTotalWords());
+            vo.setLastUpdateTime(novel.getLastUpdateTime());
+
+            // 把 Chapter 转成 ChapterOutline（去掉 content）
+            List<NovelDetailVO.ChapterOutline> outlines = chapters.stream().map(c -> {
+                NovelDetailVO.ChapterOutline o = new NovelDetailVO.ChapterOutline();
+                o.setId(c.getId());
+                o.setChapterNumber(c.getChapterNumber());
+                o.setTitle(c.getTitle());
+                o.setWordCount(c.getWordCount());
+                o.setCreateTime(c.getCreateTime());
+                return o;
+            }).toList();
+
+            vo.setChapters(outlines);
+            try {
+                novelCache.put(novelId, vo);
+            } catch (Exception e) {
+                log.warn("详情缓存写入失败，忽略。novelId={}, err={}", novelId, e.getMessage());
+            }
+            return vo;
         }
-
-        Novel novel = opt.get();
-        List<Chapter> chapters = chapterRepository.findByNovelIdOrderByChapterNumberAsc(novelId);
-
-        // 组装 VO
-        NovelDetailVO vo = new NovelDetailVO();
-        vo.setId(novel.getId());
-        vo.setTitle(novel.getTitle());
-        vo.setSummary(novel.getSummary());
-        vo.setCoverUrl(novel.getCoverUrl());
-        vo.setCategory(novel.getCategory());
-        vo.setStatus(novel.getStatus());
-        vo.setTotalWords(novel.getTotalWords());
-        vo.setLastUpdateTime(novel.getLastUpdateTime());
-
-        // 把 Chapter 转成 ChapterOutline（去掉 content）
-        List<NovelDetailVO.ChapterOutline> outlines = chapters.stream().map(c -> {
-            NovelDetailVO.ChapterOutline o = new NovelDetailVO.ChapterOutline();
-            o.setId(c.getId());
-            o.setChapterNumber(c.getChapterNumber());
-            o.setTitle(c.getTitle());
-            o.setWordCount(c.getWordCount());
-            o.setCreateTime(c.getCreateTime());
-            return o;
-        }).toList();
-
-        vo.setChapters(outlines);
-        try {
-            novelCache.put(novelId, vo);
-        } catch (Exception e) {
-            log.warn("详情缓存写入失败，忽略。novelId={}, err={}", novelId, e.getMessage());
-        }
-        return vo;
     }
 
     // ========== 9. 阅读某一章（返回完整正文） ==========
