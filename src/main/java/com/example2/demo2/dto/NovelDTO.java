@@ -12,6 +12,8 @@ public class NovelDTO {
     @NotBlank(message = "书名不能为空")
     private String title;
 
+    private String author;
+
     @NotBlank(message = "简介不能为空")
     private String summary;
 

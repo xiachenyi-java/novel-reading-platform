@@ -27,6 +27,9 @@ public class Novel {
     @Column(nullable = false)
     private String title;//书名（原来 Book 的 name）
 
+    @Column(nullable = false, length = 100)
+    private String author;//作者
+
     @Column(length = 2000)
     private String summary; //简介
 

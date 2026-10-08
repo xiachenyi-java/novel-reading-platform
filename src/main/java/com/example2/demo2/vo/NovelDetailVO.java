@@ -13,6 +13,7 @@ import java.util.List;
 public class NovelDetailVO {
     private Integer id;
     private String title;
+    private String author;
     private String summary;
     private String coverUrl;
     private String category;

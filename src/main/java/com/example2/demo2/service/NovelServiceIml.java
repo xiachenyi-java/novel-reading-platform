@@ -56,6 +56,10 @@ public class NovelServiceIml implements INovelService {
     public Novel addNovel(NovelDTO dto) {
         Novel novel = new Novel();
         novel.setTitle(dto.getTitle());
+        novel.setAuthor(dto.getAuthor()
+        == null || dto.getAuthor().isBlank()
+                ? "佚名"
+                :dto.getAuthor());
         novel.setSummary(dto.getSummary());
         novel.setCategory(dto.getCategory());
         novel.setCoverUrl(dto.getCoverUrl());
@@ -182,6 +186,7 @@ public class NovelServiceIml implements INovelService {
                 .orElseThrow(() -> new BusinessException("小说不存在"));
 
         novel.setTitle(dto.getTitle());
+        novel.setAuthor(dto.getAuthor());
         novel.setSummary(dto.getSummary());
         novel.setCategory(dto.getCategory());
         novel.setCoverUrl(dto.getCoverUrl());
@@ -269,6 +274,7 @@ public class NovelServiceIml implements INovelService {
             NovelDetailVO vo = new NovelDetailVO();
             vo.setId(novel.getId());
             vo.setTitle(novel.getTitle());
+            vo.setAuthor(novel.getAuthor());
             vo.setSummary(novel.getSummary());
             vo.setCoverUrl(novel.getCoverUrl());
             vo.setCategory(novel.getCategory());
