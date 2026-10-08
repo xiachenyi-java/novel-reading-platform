@@ -3,6 +3,7 @@ package com.example2.demo2.controller;
 import com.example2.demo2.common.Result;
 import com.example2.demo2.common.UserContext;
 import com.example2.demo2.dto.BookshelfAddDTO;
+import com.example2.demo2.dto.BookshelfTopDTO;
 import com.example2.demo2.entity.Bookshelf;
 import com.example2.demo2.enums.BookshelfSort;
 import com.example2.demo2.service.IBookshelfService;
@@ -48,4 +49,15 @@ public class BookshelfController {
 
         return Result.success(iBookshelfService.findPageBookshelf(userId,page,size,sort));
     }
+
+    @Operation(summary = "置顶/取消置顶")
+    @PutMapping
+    public Result<Bookshelf> top(@PathVariable  Integer id,
+                                 @RequestParam @Valid BookshelfTopDTO dto){
+
+        Integer userId = UserContext.getUser().getUserId();
+
+        return Result.success(iBookshelfService.top(userId,id,dto.getTop()));
+    }
+
 }

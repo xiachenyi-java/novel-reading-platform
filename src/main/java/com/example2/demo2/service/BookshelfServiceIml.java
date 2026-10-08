@@ -57,6 +57,7 @@ public class BookshelfServiceIml implements IBookshelfService {
         return bookshelfRepository.save(bookshelf);
     }
 
+    //书架列表
     @Override
     public Page<Bookshelf> findPageBookshelf(Integer userId, int page, int size, BookshelfSort sort) {
         int pageIndex = page - 1;//分页换算
@@ -71,6 +72,23 @@ public class BookshelfServiceIml implements IBookshelfService {
         Pageable pageable = PageRequest.of(pageIndex, size, s);
         return bookshelfRepository.findByUserIdAndDeleted(userId, 0, pageable);
 
+    }
+
+    //置顶
+    @Transactional(rollbackFor = Exception.class)
+    @Override
+    public Bookshelf top(Integer userId, Integer id, Integer isTop) {
+        Bookshelf bookshelf = bookshelfRepository.findByIdAndUserId(id, userId)
+                .orElseThrow(() -> new BusinessException("小说不在书架"));
+        bookshelf.setIsTop(isTop);
+        if (bookshelf.getIsTop() == 0) {
+            bookshelf.setTopTime(null);
+        }
+
+        if (bookshelf.getIsTop() == 1) {
+            bookshelf.setTopTime(LocalDateTime.now());
+        }
+        return bookshelfRepository.save(bookshelf);
     }
 
     private Sort buildSort(BookshelfSort sort) {

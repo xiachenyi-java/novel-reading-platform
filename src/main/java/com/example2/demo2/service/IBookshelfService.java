@@ -15,4 +15,7 @@ public interface IBookshelfService {
 
     //书架列表
     Page<Bookshelf> findPageBookshelf(Integer userId,int page, int size, BookshelfSort sort);
+
+    //置顶和取消置顶
+    Bookshelf top(Integer userId, Integer id, Integer isTop);
 }

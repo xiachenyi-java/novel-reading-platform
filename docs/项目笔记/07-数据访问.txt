@@ -59,6 +59,10 @@
             ★★ 实体里声明的 uk_bookshelf_user_novel **没进库**
                实测：information_schema.statistics 里 non_unique=0
                      且非 PRIMARY 的索引数 = 0
+               ★ 功能性判据（比查元数据更硬）：
+                 事务内插两条 (user_id, novel_id) 完全相同的记录
+                 → **两条都成功**，COUNT=2 ⇒ 约束在功能上也不存在
+               ⚠ 这一条曾被误判为"已解决" —— 见项目说明问题 21
   ------------------------------------------------------------------
 
   ★ 关键差异：novel 和 chapter 的索引用 @Table(indexes=...) 写在实体里，
@@ -219,8 +223,25 @@ P2 · 可以做
     List<Chapter> findByNovelIdOrderByChapterNumberAsc(Integer novelId)
     void deleteByNovelId(Integer novelId)
 
-  BookshelfRepository            ★ 2026-10-08：**尚未创建**
-    实体 Bookshelf.java 已建、dev 库表已建，但这个 Repository 还没写
+  BookshelfRepository            ★ 2026-10-08 新增
+    Optional<Bookshelf> findByUserIdAndNovelId(Integer, Integer)    复活逻辑
+    Optional<Bookshelf> findByIdAndUserId(Integer, Integer)         ★ 归属校验
+        ★ 为什么不是 findById：findById 谁都能查，越权就藏在这一步。
+          把 userId 写进查询条件 = 让数据库做安全检查，
+          比"查出来再 if 判断是不是自己的"可靠（后者容易忘了判）
+    Page<Bookshelf> findByUserIdAndDeleted(Integer, Integer, Pageable)
+        recent_read / recent_add 两种排序共用（只换 Sort 对象）
+    Page<Bookshelf> findPageOrderByNovelUpdate(Integer, Pageable)
+        ★ 原生 SQL + countQuery —— 因为要 JOIN novel 表拿 last_update_time
+        ★ 分页的排序字段跨表时，Sort 对象表达不了，必须写 SQL
+    int softDeleteByIds(List<Integer>, Integer, LocalDateTime)
+        ★ 一次 UPDATE，WHERE 里带 userId ⇒ 天然免疫越权
+        ★ 参数顺序 (ids, userId, now)，与设计文档 5.1 一致，别再变
+
+    ★ 三种排序走两条路的判断标准：**排序列落在哪张表**
+        is_top / top_time / create_time / last_read_time 都在 bookshelf
+          → Sort 对象
+        novel.last_update_time 在另一张表 → 原生 SQL（必然 filesort，接受）
 
 【★ 动态查询 Specification（2026-09 新增）】
   位置：repository/NovelSpecifications.java（新建文件）
