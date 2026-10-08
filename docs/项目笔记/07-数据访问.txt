@@ -36,7 +36,7 @@
   ✓ N+1 规避：排行榜里用 findAllById 批量查 + Map 组装
   ✓ 自动时间戳：@PrePersist / @PreUpdate 自动填 createTime / lastUpdateTime
 
-【★ 索引现状（2026-09-27 实测）】
+【★ 索引现状（2026-10-08 实测）】
 
   ------------------------------------------------------------------
   表        索引                                        状态
@@ -51,10 +51,26 @@
   chapter   PRIMARY (id)                               ✅ 正常
             idx_chapter_novel_number (novel_id, chapter_number)
   ------------------------------------------------------------------
+  bookshelf PRIMARY (id)                               ⚠ 少 1 个
+            idx_bookshelf_top_create
+                (user_id, deleted, is_top, top_time, create_time)
+            idx_bookshelf_top_read
+                (user_id, deleted, is_top, top_time, last_read_time)
+            ★★ 实体里声明的 uk_bookshelf_user_novel **没进库**
+               实测：information_schema.statistics 里 non_unique=0
+                     且非 PRIMARY 的索引数 = 0
+  ------------------------------------------------------------------
 
   ★ 关键差异：novel 和 chapter 的索引用 @Table(indexes=...) 写在实体里，
     重建表时 Hibernate 会自动创建，不会再丢。
     详见下方 P0（已完成）。
+
+  ★★ 2026-10-08 的重要修正：上面这句话**只在"建表那一刻"成立**。
+     bookshelf 就是反例 —— 实体里声明了唯一约束，表已经在库里了，
+     ddl-auto=update **不会给已存在的表补约束**，于是它永远差这一步。
+     ⇒ 正确说法：@Table(indexes=...) 管"新建表"，管不了"改已有表"。
+       已有表要改结构，必须在库里手工 ALTER（或上 Flyway）。
+     ⇒ 完整分析见 docs/项目说明-给AI.txt 问题 21
 
 【★ 实测优化效果（10 万条测试数据下）】
 
@@ -203,6 +219,9 @@ P2 · 可以做
     List<Chapter> findByNovelIdOrderByChapterNumberAsc(Integer novelId)
     void deleteByNovelId(Integer novelId)
 
+  BookshelfRepository            ★ 2026-10-08：**尚未创建**
+    实体 Bookshelf.java 已建、dev 库表已建，但这个 Repository 还没写
+
 【★ 动态查询 Specification（2026-09 新增）】
   位置：repository/NovelSpecifications.java（新建文件）
   用途：小说列表的搜索 + 分类筛选 + 状态筛选
@@ -235,6 +254,13 @@ P2 · 可以做
   用 chapter.novel_id 手动关联，未用 JPA 的 @OneToMany
   ★ 原因：避免查小说时把全部章节正文一起加载出来
 
+  User 1 ──── N Bookshelf ──── 1 Novel     ★ 2026-10-08 新增
+  同样是手动关联（user_id / novel_id），没有 @ManyToOne
+  ★ 一个用户对一本书只该有一条记录 —— 靠 uk_bookshelf_user_novel 保证，
+    但那个唯一约束**还没进库**（见上方索引现状 + 项目说明问题 21）
+  ★ 软删除：移出书架是 deleted=1，不是 DELETE 行
+    ⇒ 以后所有书架查询都必须带 deleted = 0，漏了就查出已删除的
+
 【冗余字段】
   novel.total_words
   维护点：addChapter(+wordCount) / updateChapter(+diff) / deleteChapter(-wordCount)
@@ -248,6 +274,17 @@ P2 · 可以做
   dev：ddl-auto=update + show-sql=true
   prod：ddl-auto=validate + show-sql=false
   ★ prod 用 validate 意味着改表结构要走 Flyway，但项目里还没引入 Flyway
+  ★ 那 prod 的表结构从哪来？→ docker/mysql/init/01-schema.sql，
+    由 MySQL 官方 initdb 机制在**数据目录为空时执行一次**（问题 18 的修法）
+    ⇒ 它就是 prod 的"迁移脚本"，改表结构必须同步它
+    ⚠ 2026-10-08 实测：这个脚本现在是**坏的**（两份 dump 拼接 + 缺 bookshelf）
+      → 详见 docs/项目说明-给AI.txt 问题 20
+
+【★ 两个 MySQL 实例（2026-10-08 实测）】
+  本机 localhost:3306  ← dev 连它，ddl-auto=update 会自动改表（权威库）
+  容器 localhost:3307  ← prod 连它，结构来自 01-schema.sql（演练用）
+  ⇒ 两个库独立，本机加了列容器不会有
+  ⇒ 详细说明见 docs/项目说明-给AI.txt 第九节
 
 
 ################################################################################

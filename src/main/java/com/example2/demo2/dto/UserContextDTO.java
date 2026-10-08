@@ -8,7 +8,10 @@ import lombok.Data;
  */
 @Data
 public class UserContextDTO {
+
     private Integer userId;
+
     private String username;
+
     private String role;
 }

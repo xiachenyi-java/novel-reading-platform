@@ -40,7 +40,7 @@ public class Bookshelf {
     private LocalDateTime lastReadTime;//最后阅读时间，可以为空
 
     @Column(nullable = false)
-    private Integer isTop = 0;//置顶
+    private Integer isTop = 0;//置顶,0是未置顶
 
     private LocalDateTime topTime;        // 可为 null（未置顶）
 
@@ -52,7 +52,7 @@ public class Bookshelf {
     private LocalDateTime updateTime;//更新时间
 
     @Column(nullable = false)
-    private Integer deleted = 0;//删除标记，不是删除书
+    private Integer deleted = 0;//删除标记，不是删除书,0是存在
 
     @PrePersist
     protected void onCreate() {

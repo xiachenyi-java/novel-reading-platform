@@ -186,7 +186,9 @@ public class NovelServiceIml implements INovelService {
                 .orElseThrow(() -> new BusinessException("小说不存在"));
 
         novel.setTitle(dto.getTitle());
-        novel.setAuthor(dto.getAuthor());
+        novel.setAuthor(dto.getAuthor()== null || dto.getAuthor().isBlank()
+                ? "佚名"
+                : dto.getAuthor());
         novel.setSummary(dto.getSummary());
         novel.setCategory(dto.getCategory());
         novel.setCoverUrl(dto.getCoverUrl());

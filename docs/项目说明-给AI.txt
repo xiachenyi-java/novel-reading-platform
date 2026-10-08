@@ -1,7 +1,7 @@
 ================================================================================
               项目说明 · 给 AI 助手（交接 / 上下文文档）
                           小说管理系统
-                    最后更新：2026-10-07
+                    最后更新：2026-10-08
 ================================================================================
 
 【这份文档是干什么的】
@@ -50,13 +50,21 @@
 【性质】
   个人学习项目 / 简历项目。目标不是上线运营，而是把 Java 后端知识点串成线。
 
-【规模】（★ 2026-10-05 实测核实，旧文档里的 38/2000/19/9 都是错的）
-  · 后端：37 个 Java 类，2055 行代码，16 个 REST 接口
-  · 测试：12 个测试用例，./mvnw test 连跑两遍稳定全绿（判据 B 已达标）
+【规模】（★ 2026-10-08 实测核实，旧文档里的 37/2000/19/9 都是错的）
+  · 后端：38 个 Java 类，2182 行代码，16 个 REST 接口
+  · 测试：3 个测试类 12 个测试用例，./mvnw test 连跑两遍稳定全绿（判据 B 已达标）
   · 前端：8 个 Vue 组件
-  · 数据库：3 张表（user / novel / chapter）
+  · 数据库：4 张表（user / novel / chapter / bookshelf）
   · Redis：7 类 key（认证、限流、排行榜、缓存）+ 2 个 Spring Cache 区域
           （novel / novel-null）
+
+【★ 2026-10-08 的两处改动（书架系统 步骤 1 + 步骤 2 的一半）】
+  · Novel 加 author 字段 —— 6 处链路全部落地（实体/DTO/VO/三个 Service 方法）
+      ★ 但 updateNovel 那处**漏了兜底**，是 bug，见问题区 19
+  · 新建 Bookshelf 实体 + dev 库 bookshelf 表
+      ⚠ 只做到实体和表。Repository / Service / Controller 都还没建，
+         schema.sql 里也**还没有** bookshelf —— 别以为书架系统已经能用了
+      ⚠ 实体里声明的唯一约束 uk_bookshelf_user_novel **没进库**，见问题区 21
 
 
 ################################################################################
@@ -143,15 +151,20 @@
   │   ├── NovelRepository.java           ★ JpaRepository + JpaSpecificationExecutor
   │   ├── ChapterRepository.java         findByNovelIdOrderByChapterNumberAsc 等
   │   └── NovelSpecifications.java       ★ 动态查询条件构造器
+  │   ⚠ BookshelfRepository **尚未创建**（书架系统步骤 2 只做了一半）
   │
   ├── entity/
   │   ├── User.java                      id / username / passwordHash / role
   │   ├── Novel.java                     ★ 带 @Table(indexes=...) 声明索引
-  │   └── Chapter.java                   ★ 带 @Table(indexes=...) 声明索引
+  │   ├── Chapter.java                   ★ 带 @Table(indexes=...) 声明索引
+  │   └── Bookshelf.java                 ★ 2026-10-08 新增（表已建，接口未做）
+  │                                      带 2 个 @Index + 1 个 @UniqueConstraint
   │
   ├── dto/                               入参（带校验注解）
   │   ├── LoginDTO / UserRegisterDTO / RefreshTokenDTO
-  │   ├── NovelDTO                       title/summary/category/coverUrl 全 @NotBlank
+  │   ├── NovelDTO                       title/summary/category 是 @NotBlank
+  │   │                                  ★ author 和 coverUrl **故意不加** @NotBlank
+  │   │                                    （加了会让 NovelServiceTest.testAdd 挂掉）
   │   ├── ChapterDTO                     title/content
   │   └── UserContextDTO                 放 ThreadLocal 的用户信息
   │
@@ -406,6 +419,10 @@
   novel
     id               INT PK AUTO_INCREMENT
     title            VARCHAR(255) NOT NULL
+    author           VARCHAR(100) NOT NULL     ★ 2026-10-08 新增
+                                               ★★ 注意：库里**没有 DEFAULT '佚名'**
+                                                  （SHOW COLUMNS 实测 Default=NULL）
+                                                  ⇒ 兜底只能靠 Service 层，见问题区 19
     summary          VARCHAR(2000)
     cover_url        VARCHAR(255)
     category         VARCHAR(255) NOT NULL     自由文本，不是枚举
@@ -426,6 +443,23 @@
     create_time    DATETIME(6) NOT NULL        @PrePersist 自动填
     索引：PRIMARY(id)
           idx_chapter_novel_number (novel_id, chapter_number)
+
+  bookshelf（★ 2026-10-08 新增，软删除 + 置顶排序）
+    id                   INT PK AUTO_INCREMENT
+    user_id              INT NOT NULL
+    novel_id             INT NOT NULL          手动关联，无外键约束
+    last_read_chapter_id INT 可空              最后阅读进度
+    last_read_time       DATETIME(6) 可空      最后阅读时间
+    is_top               INT NOT NULL 默认 0    置顶标记
+    top_time             DATETIME(6) 可空      置顶时间
+    create_time          DATETIME(6) NOT NULL  @PrePersist 自动填
+    update_time          DATETIME(6) NOT NULL  @PrePersist / @PreUpdate 自动维护
+    deleted              INT NOT NULL 默认 0    软删除标记（移出书架不删行）
+    索引：PRIMARY(id)
+          idx_bookshelf_top_create (user_id, deleted, is_top, top_time, create_time)
+          idx_bookshelf_top_read   (user_id, deleted, is_top, top_time, last_read_time)
+    ⚠ 实体里还声明了 uk_bookshelf_user_novel (user_id, novel_id)，
+      但库里**没有这个唯一约束** —— 见问题区 21
 
   ★ 时间字段用 @PrePersist / @PreUpdate 自动维护，
     不要在 Service 里手写 setCreateTime(LocalDateTime.now())
@@ -569,6 +603,24 @@
     MySQL    localhost:3306  数据库 book_db  账号 root/123456
     Redis    localhost:6379  ★ 本地不一定在跑，需确认
 
+    ★★ 项目里有**两个 MySQL 实例**，别搞混（2026-10-08 实测确认）：
+      ------------------------------------------------------------------
+      实例              地址              库名     角色
+      ------------------------------------------------------------------
+      本机 MySQL        localhost:3306    book_db  ★ 开发权威库
+                                                  dev 配置连的就是它
+                                                  ddl-auto=update 会自动改表
+      Docker MySQL      localhost:3307    book_db  部署演练用
+      （demo2-mysql）                             prod 配置连的就是它
+                                                  结构来自 01-schema.sql
+      ------------------------------------------------------------------
+      ★ 两个库**完全独立，数据不互通**。本机加了列，容器里不会自动有。
+      ★ 症状：GUI 客户端能看到 author 列，docker exec demo2-mysql 查却没有
+        ⇒ 第一反应应该是"我连的是哪个库"，而不是"改没生效"。
+        这叫**环境漂移**（environment drift）。
+      ★ 起因：application-dev.properties 写死 3306，
+              docker-compose.yml 把 mysql 映射到 3307，两处配置没人对账。
+
   【启动后端】
     ./mvnw clean compile            # 先确认能编译
     ./mvnw spring-boot:run          # 或者直接在 IDEA 里跑 Demo2Application
@@ -594,6 +646,9 @@
     #   mysql 的 /docker-entrypoint-initdb.d）。
     #   ★ 该脚本**只在数据目录为空时执行一次** ——
     #     改了 schema 必须 `down -v` 重建，否则脚本不跑。
+    # ⚠⚠ 2026-10-08 起这个脚本是坏的：里面有两份 dump 拼接，
+    #     且**没有 bookshelf 表** ⇒ prod 的 validate 会找不到表、
+    #     app 容器启动直接失败。**先解决问题 20 再跑 compose。**
     # 注意：mysql 没有 healthcheck，app 可能因数据库未就绪而启动失败，
     #       需要手动 docker compose restart app
     # ★ 注：Dockerfile 两处已改为 JDK 25（2026-10-06 核对代码），
@@ -644,8 +699,129 @@
 
   【🔴 上线前必须解决】
 
-  ✅ 暂无阻塞项 —— 原 17 号已修并**实测通过**（2026-10-07，见下）。
-     实测中暴露的 18 号已于当天解决（见下）。
+  ★★ 2026-10-08 新增 3 条（书架系统改动带出来的），先看这三条 → 19 / 20 / 21。
+     ⚠ 20 号会直接让 docker compose 启动失败，21 号会让"防重复加入"形同虚设。
+
+  19. 🔴【2026-10-08 发现 · 未修】updateNovel 漏了 author 兜底
+
+      ── 现象 ──
+      addNovel 和 updateNovel 都该给 author 兜底成"佚名"，但只做了一半：
+        NovelServiceIml.java:59-62  addNovel    ✅ 有兜底
+        NovelServiceIml.java:189    updateNovel ❌ 直接 novel.setAuthor(dto.getAuthor());
+      ⇒ PUT /novels/{id} 只要不传 author 就会炸。
+
+      ── 为什么一定失败（三个条件叠加）──
+        ① author 列是 NOT NULL
+           ★ 且**库里没有 DEFAULT '佚名'**（SHOW COLUMNS 实测 Default=NULL）——
+             设计文档 1.2 里写的 `DEFAULT '佚名'` 并没有真的进库
+        ② NovelDTO.author 故意没加 @NotBlank（加了会让 testAdd 挂掉）
+           ⇒ @Valid 校验放行 null
+        ③ JPA 会把 NULL **显式写进** UPDATE 语句，不给数据库留"省略该列"的机会
+      ⇒ DataIntegrityViolationException → body {"code":500}
+
+      ── 已实测的前提（用 SQL 探针，事务内回滚）──
+        INSERT INTO novel (title, author, ...) VALUES ('__probe__', NULL, ...);
+        → ERROR 1048 (23000): Column 'author' cannot be null
+        ★ 只验了"数据库这一层一定会拒"，接口层没跑（没启应用）。
+          接口层判据见下，等他跑。
+
+      ── 判据（★ 看 body 的 code，别看 HTTP 状态码）──
+        PUT /novels/1  不带 author 字段
+          期望：body.code = 200，库里 author 变成"佚名"
+          现在：body.code = 500
+        ★ 附带的边界判据：传 author = "   "（纯空格）也应变成"佚名"
+
+      ── 修法（1 个文件，约 5 行）──
+        把 addNovel 那三行兜底复制到 updateNovel；更好的做法是抽成
+        一个私有方法 setAuthorOrDefault(novel, dto)，两处共用 ——
+        ★ 这和 N1（黑名单边界两处实现不一致）是**同一个病**：
+          同一逻辑写两遍，早晚有一个漏改。
+
+  20. 🔴【2026-10-08 发现 · 未修】01-schema.sql 是两份 dump 拼在一起的
+
+      ── 现象 ──
+      docker/mysql/init/01-schema.sql（189 行）里有两份完整的 mysqldump：
+        · 第 1~86 行     "Distrib 8.0.46, for **Linux**"  ← 容器里 dump 的旧结构
+                          没有 author、没有 bookshelf
+        · 第 86 行起     "Distrib 8.0.46, for **Win64**"  ← 本机 3306 dump 的
+                          有 author、**没有 bookshelf**
+      ★ 第 86 行还是坏行：上一份的收尾 `SET SQL_MODE=@OLD_SQL_MODE */;`
+        和下一份的注释头挤在同一行（`*/;-- MySQL dump ...`）。
+      ★ 起因八成是**用了 >> 追加**而不是覆盖（或者是 Move-Item 之前
+        目标文件已存在，直接把新内容接在了后面）。
+
+      ── 净效果 ──
+      第二份在后面重新 DROP + CREATE，所以最终表结构 = 第二份 =
+      **有 author、没有 bookshelf**。第一份白占 86 行，还容易读错。
+
+      ── ★★ 为什么这是上线阻塞项 ──
+        Bookshelf 实体已经在代码里了（entity/Bookshelf.java），
+        prod 是 ddl-auto=validate —— **只校验、绝不建表**。
+        ⇒ docker compose down -v && up 之后，容器里的库只有 3 张表，
+          Hibernate 校验 Bookshelf 找不到 bookshelf 表 →
+          **启动直接失败：Schema validation: missing table [bookshelf]**
+          （和 2026-10-07 那个 missing table [chapter] 是同一个坑，第二次踩）
+
+      ── 修法 ──
+        在本机 3306 上让 Hibernate 先把 bookshelf 建出来（重启一次应用），
+        确认 4 张表齐全后，**重新 dump 并覆盖**（注意是 > 不是 >>）：
+          mysqldump -uroot -p****** --no-data --databases book_db \
+            --result-file=temp-schema.sql
+          然后覆盖 01-schema.sql（别 append）
+
+      ── 判据（★ 别只看"文件里有 bookshelf"）──
+        ① CREATE TABLE 应恰好出现 **4** 次（现在按 grep 数是 6 次 = 3 表 × 2 份）
+        ② grep "for Linux" 应**查不到**（只剩 Win64 一份）
+        ③ grep "bookshelf" 能找到，且能数出 uk_ 那一行
+        ④ ★ 真正的判据是故障演练：down -v && up -build，看 app 容器起没起来
+
+      ── 附带发现 ──
+        · 你那份工作记录里写"已备份 01-schema.sql.bak"，
+          但 docker/mysql/init/ 目录下**只有 01-schema.sql**，没有 .bak
+        · 根目录有个没提交的 temp-schema.sql（就是 dump 的中间产物）
+
+  21. 🟠【2026-10-08 发现 · 未修】bookshelf 的唯一约束没进库
+
+      ── 现象（实测）──
+        SHOW INDEX FROM book_db.bookshelf;
+        → 11 行 = PRIMARY + idx_bookshelf_top_create(5列) + idx_bookshelf_top_read(5列)
+        → **一个唯一约束都没有**
+        权威判定：
+          SELECT COUNT(*) FROM information_schema.statistics
+          WHERE table_schema='book_db' AND table_name='bookshelf'
+            AND non_unique=0 AND index_name<>'PRIMARY';   → 0
+
+      ── 但代码里是声明了的 ──
+        entity/Bookshelf.java:20-25
+          @UniqueConstraint(name="uk_bookshelf_user_novel",
+                            columnNames = "userId,novelId")
+
+      ── 为什么没进库 ──
+        Hibernate 的 ddl-auto=update **建新表时会带上约束，
+        但不会给已经存在的表补约束**。推测这张表是先跑起来建出来的，
+        之后才把 @UniqueConstraint 加进实体 —— 于是约束永远差一步。
+      ★ 这正好又是决策 6 那句话的第二次验证：
+        "索引定义跟代码走"**只在建表那一刻成立**，表已经在库里就不成立了。
+
+      ── 后果（这条最坑）──
+        设计文档 3.1「加入书架」的防重复，靠的是"撞唯一索引 →
+        抛 DataIntegrityViolationException → 走复活逻辑"。
+        约束不在库里 ⇒ 并发两次加入会**真的插入两条记录**，
+        而且那条 catch 分支**永远不会触发** ——
+        测试会绿（因为没抛异常），功能是坏的。
+        ★ 又一个"假阳性判据"：不报错 ≠ 正确。
+
+      ── 修法 ──
+        ① 先查有没有重复数据（有的话加约束会直接失败）：
+             SELECT user_id, novel_id, COUNT(*) FROM bookshelf
+             GROUP BY user_id, novel_id HAVING COUNT(*) > 1;
+        ② dev 库手动补：ALTER TABLE bookshelf
+             ADD UNIQUE KEY uk_bookshelf_user_novel (user_id, novel_id);
+        ③ 补完重新 dump schema.sql（顺带解决问题 20）
+
+      ── 判据 ──
+        重跑上面那条 information_schema 查询 → 期望 1
+        ★ 别用 SHOW CREATE TABLE 肉眼数，容易看漏
 
   17. ✅【已实测通过（2026-10-07）】Dockerfile 的 JDK 版本与 pom 不匹配
 
@@ -719,6 +895,9 @@
         容器 3 个全 Up；GET /novels → body code=200；
         chapter / novel / user 三张表齐全；novel 的 3 个索引齐全。
         ★ 注意 content 为空数组 —— 导出用的是 --no-data，只带结构不带数据。
+        ★ 2026-10-08 回看：当时只有 3 张表（bookshelf 还没建），
+          所以那时的脚本是对的。现在有了 Bookshelf 实体，
+          这份"只有 3 张表"的脚本会让 prod 启动失败 —— 见问题 20。
 
       ── 遗留待办 ──
         · mysql 仍无 healthcheck（七·二 B1 待办）——
@@ -858,6 +1037,18 @@
 
   改索引                            实体类上的 @Table(indexes=...)
                                     ★ 不要手写 CREATE INDEX
+                                    ★ 但表已存在时 update 不会补 —— 见问题 21
+
+  给表加字段 / 加新表               ★ 这是"三处同步"，少一处就出事：
+                                    1. 实体加字段（注意 nullable 要和 DDL 对齐，
+                                       prod 的 validate 会对不上就启动失败）
+                                    2. 顺带看 DTO / VO / Service 三处要不要跟
+                                       ★ 改"创建"时别忘了"修改"（见问题 19）
+                                    3. 重启 dev 应用 → ddl-auto=update 自动加列
+                                    4. ★ 重新 dump docker/mysql/init/01-schema.sql
+                                       （覆盖，不是追加！见问题 20）
+                                    5. 重启 dev 让 Hibernate 把表建出来再 dump ——
+                                       顺序反了会 dump 出一份缺表的脚本
 
   加新的 Redis 缓存 / 排行榜        NovelServiceIml.java
 
@@ -1010,8 +1201,9 @@
   │
   ├── 面试题库/                      ★ 持续累积（2026-10-06 新增）
   │   ├── 00-总目录.txt              分类索引 + 高频追问排行 + 硬素材速查
-  │   ├── 01-缓存体系.txt            12 题（含「怎么证明降级真的生效了」）
-  │   └── 02-工程实践与排错.txt      7 题（验证方法论 / 压测 / Lost Update）
+  │   ├── 01-缓存体系.txt            13 题（含「怎么证明降级真的生效了」）
+  │   └── 02-工程实践与排错.txt      8 题（验证方法论 / 压测 / Lost Update /
+  │                                         ★ Q8 表结构同步与 ddl-auto 三个坑）
   │
   └── 设计/                          ★ 第五类（2026-10-07 新增）
       └── 书架系统-设计方案.txt      ★ 书架系统设计 v2
