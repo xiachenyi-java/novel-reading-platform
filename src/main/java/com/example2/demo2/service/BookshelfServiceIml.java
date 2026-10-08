@@ -2,11 +2,15 @@ package com.example2.demo2.service;
 
 import com.example2.demo2.common.exception.BusinessException;
 import com.example2.demo2.entity.Bookshelf;
-import com.example2.demo2.entity.Novel;
+import com.example2.demo2.enums.BookshelfSort;
 import com.example2.demo2.repository.BookshelfRepository;
 import com.example2.demo2.repository.NovelRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,9 +37,9 @@ public class BookshelfServiceIml implements IBookshelfService {
         novelRepository.findById(novelId).orElseThrow(() -> new BusinessException("小说不存在"));
 
         //判断是否在书架中
-        Bookshelf existing  = bookshelfRepository.findByUserIdAndNovelId(userId,novelId).orElse(null);
-        if (existing != null ) {
-            if (existing.getDeleted() == 0){
+        Bookshelf existing = bookshelfRepository.findByUserIdAndNovelId(userId, novelId).orElse(null);
+        if (existing != null) {
+            if (existing.getDeleted() == 0) {
                 log.info("用户已在书架中，幂等返回。userId={}, novelId={}", userId, novelId);
                 return existing;
             }
@@ -51,5 +55,36 @@ public class BookshelfServiceIml implements IBookshelfService {
         bookshelf.setIsTop(0);//不置顶
         bookshelf.setDeleted(0);//存在书架
         return bookshelfRepository.save(bookshelf);
+    }
+
+    @Override
+    public Page<Bookshelf> findPageBookshelf(Integer userId, int page, int size, BookshelfSort sort) {
+        int pageIndex = page - 1;//分页换算
+
+        //按更新时间排序
+        if (sort == BookshelfSort.NOVEL_UPDATE) {
+            Pageable pageable = PageRequest.of(pageIndex, size);
+            return bookshelfRepository.findPageOrderByNovelUpdate(userId, pageable);
+        }
+
+        Sort s = buildSort(sort);
+        Pageable pageable = PageRequest.of(pageIndex, size, s);
+        return bookshelfRepository.findByUserIdAndDeleted(userId, 0, pageable);
+
+    }
+
+    private Sort buildSort(BookshelfSort sort) {
+        return switch (sort) {
+            case RECENT_ADD -> Sort.by(
+                    Sort.Order.desc("isTop"),
+                    Sort.Order.desc("topTime"),
+                    Sort.Order.desc("createTime"),
+                    Sort.Order.desc("id"));
+            default -> Sort.by(                        // RECENT_READ
+                    Sort.Order.desc("isTop"),
+                    Sort.Order.desc("topTime"),
+                    Sort.Order.desc("lastReadTime"),
+                    Sort.Order.desc("id"));
+        };
     }
 }

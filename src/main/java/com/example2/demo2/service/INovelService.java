@@ -30,7 +30,7 @@ public interface INovelService {
     void updateNovel(Integer id, NovelDTO dto);
 
     // 1. 小说列表（分页，按更新时间倒序）,增加分类
-    Page<Novel> findPage(int page, int size, String category, String status, String keyword);
+    Page<Novel> findPageNovel(int page, int size, String category, String status, String keyword);
 
     // 3. 小说详情 + 章节目录
     NovelDetailVO findDetail(Integer novelId);

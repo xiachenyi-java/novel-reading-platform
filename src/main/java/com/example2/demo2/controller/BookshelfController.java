@@ -4,14 +4,15 @@ import com.example2.demo2.common.Result;
 import com.example2.demo2.common.UserContext;
 import com.example2.demo2.dto.BookshelfAddDTO;
 import com.example2.demo2.entity.Bookshelf;
+import com.example2.demo2.enums.BookshelfSort;
 import com.example2.demo2.service.IBookshelfService;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.data.domain.Page;
+import org.springframework.web.bind.annotation.*;
+
+
 
 /**
  * 夏辰义
@@ -32,5 +33,19 @@ public class BookshelfController {
         Integer userId = UserContext.getUser().getUserId();
 
         return Result.success(iBookshelfService.addBookshelf(userId,dto.getNovelId()));
+    }
+
+    @Operation(summary = "书架列表")
+    @GetMapping
+    public Result<Page<Bookshelf>> listBookshelf(@RequestParam(defaultValue = "1")   Integer page,
+                                                 @RequestParam(defaultValue = "10")   Integer size,
+                                                 @RequestParam(defaultValue = "RECENT_READ")  BookshelfSort sort){
+        if (page < 1)  {page = 1;}
+        if (size < 1)  {size = 10;}
+        if (size > 100) {size = 100;}
+
+        Integer userId = UserContext.getUser().getUserId();
+
+        return Result.success(iBookshelfService.findPageBookshelf(userId,page,size,sort));
     }
 }

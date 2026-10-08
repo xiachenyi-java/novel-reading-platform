@@ -198,7 +198,7 @@ public class NovelServiceIml implements INovelService {
 
     // ========== 7. 小说列表（分页，按更新时间倒序） ==========
     @Override
-    public Page<Novel> findPage(int page, int size, String category, String status, String keyword) {
+    public Page<Novel> findPageNovel(int page, int size, String category, String status, String keyword) {
         Pageable pageable = PageRequest.of(page - 1, size,
                 Sort.by("lastUpdateTime").descending());
         Specification<Novel> spec = Specification.allOf(

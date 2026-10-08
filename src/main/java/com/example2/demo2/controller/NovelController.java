@@ -92,7 +92,7 @@ public class NovelController {
 
     @Operation(summary = "小说列表")
     @GetMapping
-    public Result<Page<Novel>> list(
+    public Result<Page<Novel>> listNovel(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(defaultValue = "") String category,
@@ -108,7 +108,7 @@ public class NovelController {
         if (size > 100) {
             size = 100;
         }
-        return Result.success(iNovelService.findPage(page, size, category, status, keyword));
+        return Result.success(iNovelService.findPageNovel(page, size, category, status, keyword));
     }
 
     @Operation(summary = "分类")
