@@ -46,7 +46,7 @@
           </div>
           <div class="actions">
             <el-button type="primary" plain @click="startReading">📖 开始阅读</el-button>
-            <el-button plain @click="handleAction('书架')">📚 加入书架</el-button>
+            <el-button plain @click="handleAddToShelf">📚 加入书架</el-button>
             <el-button plain @click="handleAction('评分')">⭐ 打分</el-button>
           </div>
         </div>
@@ -157,6 +157,8 @@ import {
   updateChapter,
   deleteChapter
 } from '../api/novel'
+// ★ 新增：加入书架接口
+import { addToBookshelf } from '../api/bookshelf'
 
 const route = useRoute()
 const router = useRouter()
@@ -316,6 +318,36 @@ const startReading = () => {
   goRead(chapters.value[0].id)
 }
 
+// ====== ★ 加入书架（真实调用）======
+const handleAddToShelf = async () => {
+  const token = localStorage.getItem('token')
+  if (!token) {
+    ElMessageBox.confirm('请先登录再使用“加入书架”功能', '提示', {
+      confirmButtonText: '去登录',
+      cancelButtonText: '继续浏览'
+    })
+      .then(() => {
+        router.push('/login')
+      })
+      .catch(() => {})
+    return
+  }
+
+  const novelId = route.params.id
+  try {
+    const res = await addToBookshelf(novelId)
+    if (res.data.code === 200) {
+      ElMessage.success('已加入书架')
+    } else {
+      ElMessage.error(res.data.msg || '加入书架失败')
+    }
+  } catch (error) {
+    console.error('加入书架失败:', error)
+    ElMessage.error('加入书架失败')
+  }
+}
+
+// ====== 通用动作（保留给“打分”等模拟功能）======
 const handleAction = (action) => {
   const token = localStorage.getItem('token')
   if (!token) {

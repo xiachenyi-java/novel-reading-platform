@@ -1,12 +1,10 @@
-package com.example2.demo2.common;
+package com.example2.demo2.config;
 
 import com.example2.demo2.enums.BookshelfSort;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.stereotype.Component;
 
 import java.util.Locale;
-
-import static com.example2.demo2.enums.BookshelfSort.RECENT_READ;
 
 /**
  * 夏辰义

@@ -44,4 +44,17 @@ public interface BookshelfRepository extends JpaRepository<Bookshelf, Integer> {
     int softDeleteByIds(@Param("ids") List<Integer> ids,
                         @Param("userId") Integer userId,
                         @Param("now") LocalDateTime now);
+
+
+    @Modifying
+    @Query("UPDATE Bookshelf b SET b.lastReadChapterId = :chapterId, " +
+            "b.lastReadTime = :readTime, b.updateTime = :now " +
+            "WHERE b.userId = :userId AND b.novelId = :novelId AND b.deleted = 0 " +
+            "AND (b.lastReadTime IS NULL OR b.lastReadTime < :readTime)")
+    int updateProgressFromRedis(@Param("userId") Integer userId,
+                                @Param("novelId") Integer novelId,
+                                @Param("chapterId") Integer chapterId,
+                                @Param("readTime") LocalDateTime readTime,
+                                @Param("now") LocalDateTime now);
+
 }

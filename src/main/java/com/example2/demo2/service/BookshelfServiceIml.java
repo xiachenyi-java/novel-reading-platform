@@ -11,10 +11,15 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 夏辰义
@@ -28,6 +33,8 @@ public class BookshelfServiceIml implements IBookshelfService {
     private final NovelRepository novelRepository;
 
     private final BookshelfRepository bookshelfRepository;
+
+    private final StringRedisTemplate  stringRedisTemplate;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -77,10 +84,10 @@ public class BookshelfServiceIml implements IBookshelfService {
     //置顶
     @Transactional(rollbackFor = Exception.class)
     @Override
-    public Bookshelf top(Integer userId, Integer id, Integer isTop) {
-        Bookshelf bookshelf = bookshelfRepository.findByIdAndUserId(id, userId)
+    public void top(Integer userId, Integer BookshelfId, Boolean isTop) {
+        Bookshelf bookshelf = bookshelfRepository.findByIdAndUserId(BookshelfId, userId)
                 .orElseThrow(() -> new BusinessException("小说不在书架"));
-        bookshelf.setIsTop(isTop);
+        bookshelf.setIsTop(isTop ? 1 : 0);
         if (bookshelf.getIsTop() == 0) {
             bookshelf.setTopTime(null);
         }
@@ -88,7 +95,55 @@ public class BookshelfServiceIml implements IBookshelfService {
         if (bookshelf.getIsTop() == 1) {
             bookshelf.setTopTime(LocalDateTime.now());
         }
-        return bookshelfRepository.save(bookshelf);
+        bookshelfRepository.save(bookshelf);
+    }
+
+    //软删除
+    @Transactional(rollbackFor = Exception.class)
+    @Override
+    public void remove(Integer userId, Integer BookshelfId) {
+        Bookshelf bookshelf = bookshelfRepository.findByIdAndUserId(BookshelfId, userId).orElseThrow(() -> new BusinessException("书不存在"));
+        bookshelf.setDeleted(1);
+        bookshelf.setIsTop(0);
+        bookshelf.setTopTime(null);
+        bookshelf.setLastReadChapterId(null);
+        bookshelf.setLastReadTime(null);
+        bookshelfRepository.save(bookshelf);
+
+    }
+
+    //批量删除
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void batchRemove(Integer userId, List<Integer> ids) {
+        int affected = bookshelfRepository.softDeleteByIds(
+                ids,
+                userId,
+                LocalDateTime.now());
+
+        if(affected < ids.size()){
+            log.info("批量移出部分成功：请求 {} 条，实际移出 {} 条（其余为他人记录/已移出/不存在）",
+                    ids.size(), affected);
+        }
+    }
+
+    @Override
+    public void updateProgress(Integer userId, Integer novelId, Integer chapterId, Integer chapterNumber) {
+        try {
+            String key = "progress:" + userId + ":" + novelId;
+
+            Map<String, String> progress = new HashMap<>();
+            progress.put("chapterId", String.valueOf(chapterId));
+            progress.put("chapterNumber", String.valueOf(chapterNumber));
+            progress.put("updateTime", String.valueOf(System.currentTimeMillis()));
+
+            stringRedisTemplate.opsForHash().putAll(key, progress);
+            stringRedisTemplate.expire(key, 7, TimeUnit.DAYS);
+        } catch (Exception e) {
+            // 进度写入失败不能影响正常阅读，降级忽略
+            log.warn("阅读进度写入 Redis 失败，降级忽略。userId={}, novelId={}, chapterId={}",
+                    userId, novelId, chapterId, e);
+        }
     }
 
     private Sort buildSort(BookshelfSort sort) {

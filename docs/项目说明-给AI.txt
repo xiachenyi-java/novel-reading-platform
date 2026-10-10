@@ -50,32 +50,36 @@
 【性质】
   个人学习项目 / 简历项目。目标不是上线运营，而是把 Java 后端知识点串成线。
 
-【规模】（★ 2026-10-08 实测核实，旧文档里的 37/2000/19/9 都是错的）
-  · 后端：45 个 Java 类，2450 行代码，18 个 REST 接口
+【规模】（★ 2026-10-10 实测核实，旧文档里的 37/2000/19/9 都是错的）
+  · 后端：48 个 Java 类，2742 行代码，21 个 REST 接口
   · 测试：3 个测试类 12 个测试用例
           ⚠ 判据 B 的"连跑两遍全绿"是 2026-10-03 的结论；
-            本轮动过现有代码，**需重跑确认**
+            本轮动过现有代码（含 readChapter），**必须重跑**
+          ⚠ 书架系统 + 阅读进度目前**一个测试都没有**
   · 前端：8 个 Vue 组件
   · 数据库：4 张表（user / novel / chapter / bookshelf）
-  · Redis：7 类 key（认证、限流、排行榜、缓存）+ 2 个 Spring Cache 区域
-          （novel / novel-null）
+  · Redis：8 类 key（认证、限流、排行榜、缓存、**阅读进度**）
+          + 2 个 Spring Cache 区域（novel / novel-null）
 
-【★ 2026-10-08 书架系统进度（详见 docs/项目笔记/14-书架系统.txt）】
+【★ 书架系统进度（详见 docs/项目笔记/14-书架系统.txt）】
   ------------------------------------------------------------------
   步骤                                  状态
   ------------------------------------------------------------------
-  1  Novel 加 author                    ✅ 完成（问题 19 已修复）
-  2  Bookshelf 实体 + Repository        ✅ 完成
-                                        ⚠ 唯一约束**没进库** → 问题 21
-  3  Service + Controller               🟡 2/5 接口（加入 + 列表）
-                                        置顶 / 移出 / 批量移出 未做
-  4  readChapter 写 Redis 进度          ❌ 未开始
-  5  定时任务刷回 DB                    ❌ 未开始
+  1  Novel 加 author                    ✅ 完成
+  2  Bookshelf 实体 + Repository        ✅ 完成（唯一约束已补进库）
+  3  Service + Controller               ✅ **5/5 接口全通**
+                                        ⚠ 返回值仍是实体 Bookshelf，
+                                          不是 BookshelfItemVO（步骤 3 尾巴）
+  4  readChapter 写 Redis 进度          ✅ 完成
+  5  定时任务刷回 DB                    ✅ 完成（ProgressFlushTask）
   ------------------------------------------------------------------
-  ★ 书架接口已能跑：POST /bookshelfs（加入，含复活逻辑）、
-    GET /bookshelfs（列表，3 种排序）
-  ⚠ 但路径是**复数** /bookshelfs，设计文档写的是**单数** /bookshelf，
-    两边对不上 → 见问题 22
+  ★ 5 个接口：POST /bookshelf（加入）、GET /bookshelf（列表）、
+    PUT /bookshelf/{id}/top（置顶）、DELETE /bookshelf/{id}（移出）、
+    POST /bookshelf/batch-remove（批量移出）
+  ✅ 路径已统一为**单数** /bookshelf，与设计文档一致（原问题 22 已修）
+  ⚠ 唯一约束已补进库（原问题 21 已修）
+  ⚠⚠ **docker 建表脚本编码坏了** → 问题 20，会让部署失败
+  ⚠ 新发现：移出再重新加入，旧阅读进度会被定时任务写回来 → 问题 24
 
 
 ################################################################################
@@ -132,9 +136,6 @@
   │   ├── JwtUtil.java                   JWT 生成/解析
   │   ├── UserContext.java               ★ ThreadLocal 存当前用户
   │   ├── RateLimitAspect.java           @RateLimit 切面
-  │   ├── BookshelfSortConverter.java    ★ 2026-10-08 新增
-  │   │                                   sort 参数大小写不敏感 + 非法值兜底
-  │   │                                   ★ 忘加 @Component 就整类失效（已加）
   │   ├── annotation/
   │   │   ├── RateLimit.java             限流注解（key/limit/window）
   │   │   └── RequireAdmin.java          管理员权限注解
@@ -150,22 +151,33 @@
   │   ├── LoginInterceptor.java          ★★ 认证/鉴权核心
   │   ├── WebConfig.java                 注册拦截器 + /uploads 静态映射
   │   ├── CorsConfig.java                只允许 localhost:5173
-  │   └── CacheConfig.java               ★ RedisCacheManager + CacheErrorHandler
-  │                                      （★ JacksonConfig 已删除，见问题区 11）
+  │   ├── CacheConfig.java               ★ RedisCacheManager + CacheErrorHandler
+  │   │                                  （★ JacksonConfig 已删除，见问题清单 11）
+  │   └── BookshelfSortConverter.java    ★ 2026-10-10 从 common/ 移到这里
+  │                                       sort 参数大小写不敏感 + 非法值兜底
+  │                                       ★ 忘加 @Component 就整类失效（已加）
+  │                                       ★ 它是 Spring 配置 bean，放 config/ 更合理
   │
   ├── controller/
   │   ├── UserController.java            注册/登录/登出/刷新
   │   ├── NovelController.java           ★ 小说 + 章节的所有接口
   │   ├── FileController.java            封面上传
-  │   └── BookshelfController.java       ★ 2026-10-08 新增（2 个接口）
-  │                                      ⚠ @RequestMapping("/bookshelfs") 复数
+  │   └── BookshelfController.java       ★ 2026-10-08 新增，10-10 补齐 5 个接口
+  │                                      @RequestMapping("/bookshelf") 单数
   │
   ├── service/
   │   ├── UserService.java               认证逻辑
   │   ├── INovelService.java             ★ 小说服务接口
   │   ├── NovelServiceIml.java           ★ 小说服务实现（核心业务）
+  │   │                                  ★ 2026-10-10：readChapter 里调
+  │   │                                    IBookshelfService.updateProgress
+  │   │                                    （★★ 必须判空 —— 它是游客接口）
   │   ├── IBookshelfService.java         ★ 2026-10-08 新增
-  │   └── BookshelfServiceIml.java       ★ 2026-10-08 新增（加入 + 列表）
+  │   └── BookshelfServiceIml.java       ★ 5 个接口 + updateProgress
+  │
+  ├── task/                              ★ 2026-10-10 新增的包
+  │   └── ProgressFlushTask.java         每 5 分钟把 Redis 进度刷回 DB
+  │                                      @Scheduled(fixedDelay) + SCAN + 幂等
   │
   ├── repository/
   │   ├── UserRepository.java            findByUsername
@@ -194,6 +206,10 @@
   │   ├── BookshelfAddDTO                ★ novelId @NotNull
   │   │                                    ★ 必须建 DTO 的原因：@RequestBody 不能
   │   │                                      直接反序列化成 Integer（请求体是对象）
+  │   ├── BookshelfTopDTO                ★ top 用 **Boolean**（不是 Integer）
+  │   │                                    ★ 用 Integer 的话传 top=2 会存进库里
+  │   │                                      is_top=2，两个 if 分支都不进
+  │   ├── BookshelfBatchDeleteDTO        ★ ids：@NotEmpty + @Size(max=100)
   │   └── UserContextDTO                 放 ThreadLocal 的用户信息
   │
   └── vo/                                出参
@@ -456,7 +472,7 @@
     author           VARCHAR(100) NOT NULL     ★ 2026-10-08 新增
                                                ★★ 注意：库里**没有 DEFAULT '佚名'**
                                                   （SHOW COLUMNS 实测 Default=NULL）
-                                                  ⇒ 兜底只能靠 Service 层，见问题区 19
+                                                  ⇒ 兜底只能靠 Service 层，见问题清单 19
     summary          VARCHAR(2000)
     cover_url        VARCHAR(255)
     category         VARCHAR(255) NOT NULL     自由文本，不是枚举
@@ -490,11 +506,11 @@
     update_time          DATETIME(6) NOT NULL  @PrePersist / @PreUpdate 自动维护
     deleted              INT NOT NULL 默认 0    软删除标记（移出书架不删行）
     索引：PRIMARY(id)
+          uk_bookshelf_user_novel  (user_id, novel_id)          UNIQUE ★
           idx_bookshelf_top_create (user_id, deleted, is_top, top_time, create_time)
           idx_bookshelf_top_read   (user_id, deleted, is_top, top_time, last_read_time)
-          ⚠ 实体里还声明了 uk_bookshelf_user_novel (user_id, novel_id)，
-            但库里**没有这个唯一约束** —— 见问题区 21
-            ★ 已实测：同一 (user_id, novel_id) 能插入两条记录
+    ★ 唯一约束 2026-10-10 已补进库（原问题 21 已解决）
+    ★ 共 4 个索引（PRIMARY + 1 UK + 2 KEY），与设计文档 1.1 节一致
 
   ★ 时间字段用 @PrePersist / @PreUpdate 自动维护，
     不要在 Service 里手写 setCreateTime(LocalDateTime.now())
@@ -538,21 +554,27 @@
   POST   /upload                           需登录  上传封面图
   ------------------------------------------------------------------
 
-  【书架模块 /bookshelfs】（★ 2026-10-08 新增，注意是**复数**）
+  【书架模块 /bookshelf】（★ 2026-10-08 新增，2026-10-10 全部完成）
   ------------------------------------------------------------------
-  方法   路径                权限    说明
+  方法   路径                        权限    说明
   ------------------------------------------------------------------
-  POST   /bookshelfs        需登录  加入书架（三分支：新建 / 幂等返回 /
-                                    复活 deleted=1 的旧记录）
-  GET    /bookshelfs        需登录  书架列表
-                                    参数 page/size/sort
-                                    sort = RECENT_READ（默认）|
-                                           RECENT_ADD | NOVEL_UPDATE
-                                    ★ 大小写不敏感，非法值兜底为默认
+  POST   /bookshelf                 需登录  加入书架（三分支：新建 / 幂等返回 /
+                                            复活 deleted=1 的旧记录）
+  GET    /bookshelf                 需登录  书架列表
+                                            参数 page/size/sort
+                                            sort = RECENT_READ（默认）|
+                                                   RECENT_ADD | NOVEL_UPDATE
+                                            ★ 大小写不敏感，非法值兜底为默认
+  PUT    /bookshelf/{id}/top        需登录  置顶 / 取消置顶（显式传值，非 toggle）
+                                            Body: {"top": true|false}
+                                            取消时 top_time 清成 null
+  DELETE /bookshelf/{id}            需登录  移出一本（软删 deleted=1）
+                                            同时清 is_top / top_time / 阅读进度
+  POST   /bookshelf/batch-remove    需登录  批量移出
+                                            Body: {"ids":[1,2,3]}，上限 100
   ------------------------------------------------------------------
-  ⚠ 设计文档写的是单数 /bookshelf，代码是复数 /bookshelfs —— 见问题 22
-  ⚠ 尚未实现：PUT /{id}/top、DELETE /{id}、POST /batch-remove
-  ★ 返回值目前是**实体 Bookshelf**，不是 VO（步骤 3 尾部统一改）
+  ★ 路径统一为**单数** /bookshelf，与设计文档一致（原问题 22 已修）
+  ★ 返回值目前是**实体 Bookshelf**，不是 VO（见项目笔记/14 步骤 3 尾巴）
 
   【统一响应格式】
     { "code": 200, "msg": "success", "data": ... }
@@ -575,7 +597,19 @@
   rate_limit:{key}:{ip}          String    window秒 限流计数
   ranking:novel:total            ZSET      无       总榜热度
   ranking:novel:day:{yyyyMMdd}   ZSET      2天      日榜热度
+  progress:{userId}:{novelId}    Hash      7天      ★ 2026-10-10 新增：阅读进度
+                                                    field: chapterId /
+                                                           chapterNumber /
+                                                           updateTime(毫秒)
   ------------------------------------------------------------------
+  ★ progress:* 的设计（write-behind 写回模式）
+    · 写入：NovelServiceIml.readChapter → IBookshelfService.updateProgress
+            ★ readChapter 是**游客接口**，UserContext 匿名时是 null，必须判空
+    · 刷回：task/ProgressFlushTask，@Scheduled(fixedDelay = 300000)
+            SCAN（不是 KEYS）+ Cursor try-with-resources
+            + WHERE (lastReadTime IS NULL OR lastReadTime < :readTime) 幂等
+    · 为什么先写 Redis 不写 DB：快速翻页会打 10+ 次 UPDATE
+    · ⚠ 移出书架时**没有删这个 key** → 见问题 24
 
   【Spring Cache 用的 key】（★ 2026-10-05 起有两个缓存区）
     ------------------------------------------------------------------
@@ -697,9 +731,14 @@
     #   mysql 的 /docker-entrypoint-initdb.d）。
     #   ★ 该脚本**只在数据目录为空时执行一次** ——
     #     改了 schema 必须 `down -v` 重建，否则脚本不跑。
-    # ⚠⚠ 2026-10-08 起这个脚本是坏的：里面有两份 dump 拼接，
-    #     且**没有 bookshelf 表** ⇒ prod 的 validate 会找不到表、
-    #     app 容器启动直接失败。**先解决问题 20 再跑 compose。**
+    # ⚠⚠ 2026-10-10 起这个脚本是坏的：内容已对（4 张表齐全），
+    #     但**编码是 UTF-16LE**（PowerShell 的 > 重定向干的），
+    #     MySQL 客户端读到 NUL 字节就报错 ⇒ 建表失败 ⇒ app 起不来。
+    #     **先解决问题 20 再跑 compose。**
+    #     ★ 自检：file docker/mysql/init/01-schema.sql
+    #       输出里出现 UTF-16 就是坏的
+    #     ★ 注意坑：UTF-16 时 grep -c "CREATE TABLE" 返回 0，
+    #       看起来像"表没导进去"，其实是"编码不对" —— 先看编码再看内容
     # 注意：mysql 没有 healthcheck，app 可能因数据库未就绪而启动失败，
     #       需要手动 docker compose restart app
     # ★ 注：Dockerfile 两处已改为 JDK 25（2026-10-06 核对代码），
@@ -717,377 +756,40 @@
   十、已知问题与坑（★ 改动前先看这里）
 ################################################################################
 
-  【✅ 2026-10-02 ~ 10-05 已解决（原 🔴 三条 P0 全清）】
-  ~~1. updateNovel 的参数注解与路径不匹配~~
-     → 已改成 @PathVariable（提交 b8e1ceb）
-     ★ 附带教训：这个 bug 能瞒过编译器和 IDE，因为 @RequestParam Integer
-       和 @PathVariable Integer 类型完全一样。编译通过 ≠ 功能正确。
-  ~~2. 拦截器非游客路径的 Redis 查询没有降级~~
-     → 已包 try-catch，Redis 异常时降级为"跳过黑名单检查"+ log.warn
-       （约 LoginInterceptor 110 行）
-  ~~3. 排行榜没有降级~~
-     → 已包 try-catch，异常时返回空列表
-     ★ 顺带把两个 100% 重复的方法抽成了 findRankingByKey（原问题 14）
-  ~~10. 测试类编译不过~~ → 已修，12 个测试连跑两遍全绿
-  ~~14. 两个排行榜方法 100% 重复~~ → 已抽成 findRankingByKey
-
-  【✅ 2026-10-06 已解决】
-
-  ~~0. 缓存降级失效（手动调用绕过 AOP 切面）~~
-     → 已修复：超时配置（止血）+ findDetail 4 处 try-catch（治疗）
-     背景：findDetail 为了做空值缓存，从 @Cacheable 改成了手动
-           cacheManager.getCache("novel").get(...) 调用，
-           绕过了 AOP 切面，CacheErrorHandler 静默失效。
-     验证（docker stop demo2-redis）：
-       · GET /novels/1 → 1.01s → HTTP 200 + body {"code":200, 有数据}
-       · GET /novels   → 不受影响（不依赖 Redis）
-       · 日志出现"空标记读取失败 / 详情缓存读取失败"降级 warn
-     ★ 学习价值：这是"改动引入回归"的典型案例 ——
-       改缓存实现时完全没意识到会影响降级，靠故障演练才发现。
-     ★★ 附带发现：Lettuce 断连时会缓冲写命令、重连后自动补发，
-        所以 put 的 catch 在当前场景下不会触发。
-     完整过程见决策 7 + docs/实战笔记/05-缓存三大问题实战.txt
-
-  【🔴 上线前必须解决】
-
-  ★★ 2026-10-08 书架系统改动带出来的 4 条 → 19 / 20 / 21 / 22。
-     原 20 / 21 已部分解决，**21 仍然未解决**（曾被误判为已解决，见下）。
-
-  19. ✅【2026-10-08 发现 · 当天已修】updateNovel 漏了 author 兜底
-
-      ── 当时的现象 ──
-      addNovel 和 updateNovel 都该给 author 兜底成"佚名"，但只做了一半：
-        addNovel    ✅ 有兜底
-        updateNovel ❌ 直接 novel.setAuthor(dto.getAuthor());
-      ⇒ PUT /novels/{id} 只要不传 author 就会炸。
-
-      ── 为什么一定失败（三个条件叠加）──
-        ① author 列是 NOT NULL
-           ★ 且**库里没有 DEFAULT '佚名'**（SHOW COLUMNS 实测 Default=NULL）——
-             设计文档 1.2 里写的 `DEFAULT '佚名'` 并没有真的进库
-        ② NovelDTO.author 故意没加 @NotBlank（加了会让 testAdd 挂掉）
-           ⇒ @Valid 校验放行 null
-        ③ JPA 会把 NULL **显式写进** UPDATE 语句，不给数据库留"省略该列"的机会
-      ⇒ DataIntegrityViolationException → body {"code":500}
-
-      ── ✅ 现状（2026-10-08 复核代码）──
-      NovelServiceIml.updateNovel 已补上 isBlank 兜底分支，与 addNovel 一致。
-      ★ 库里 author 列**仍然没有 DEFAULT**（实测 Default=NULL），
-        所以这个兜底是**必须的**，不是可选的防御性代码 ——
-        谁都不要再"简化"掉它。
-
-      ── 仍待跑（修好了不代表验过了）──
-        PUT /novels/1 不带 author      → 期望 body.code=200 且库里="佚名"
-        PUT /novels/1 传 author="   "  → 期望同上
-      ★ 判据看 **body 的 code 字段**，不看 HTTP 状态码。
-      ★ 数据库这一层已用探针验过：
-        INSERT ... author=NULL → ERROR 1048 (23000) Column 'author' cannot be null
-
-  20. 🟡【2026-10-08 发现 · 修了一半】01-schema.sql 拼接问题已解决，但仍缺 bookshelf
-
-      ── 当时的现象 ──
-      docker/mysql/init/01-schema.sql（189 行）里有两份完整的 mysqldump：
-        · 第 1~86 行     "for **Linux**"  ← 容器里 dump 的旧结构，没有 author
-        · 第 86 行起     "for **Win64**"  ← 本机 3306 dump 的
-      ★ 第 86 行还是坏行：上一份的收尾和下一份的注释头挤在同一行
-        （`*/;-- MySQL dump ...`）。起因八成是**用了 >> 追加**而不是覆盖。
-
-      ── ✅ 已解决的部分（2026-10-08 复核）──
-        文件已重建为**单一 Win64 dump**（grep "for Linux" 已查不到）。
-        拼接问题消失，不能再出现"两份 dump 互相覆盖"的隐患。
-
-      ── ⚠ 仍未解决的部分 ──
-        脚本里只有 **3 张表**：chapter / novel / user。
-        **没有 bookshelf**，也没有 uk_bookshelf_user_novel。
-        ⇒ Bookshelf 实体已在代码里，prod 是 ddl-auto=validate（只校验不建表），
-          `docker compose down -v && up --build` 会**启动直接失败**：
-          `Schema validation: missing table [bookshelf]`
-          （和 2026-10-07 那个 missing table [chapter] 是同一个坑）
-
-      ── 修法 ──
-        先修问题 21 的唯一约束，确认 dev 库 4 张表齐全后，
-        **重新 dump 并覆盖**（注意是 > 不是 >>）：
-          mysqldump -uroot -p****** --no-data --databases book_db \
-            --result-file=temp-schema.sql
-          然后覆盖 01-schema.sql
-
-      ── 判据（★ 别只看"文件里有 bookshelf"）──
-        ① CREATE TABLE 应恰好出现 **4** 次（现在实测是 **3** 次）
-        ② grep "for Linux" 应查不到（✅ 已满足）
-        ③ grep "bookshelf" 能找到，且能数出 uk_ 那一行
-        ④ ★ 真正的判据是故障演练：down -v && up --build，看 app 容器起没起来
-
-      ── 附带发现 ──
-        · 你那份工作记录里写"已备份 01-schema.sql.bak"，
-          但 docker/mysql/init/ 目录下**只有 01-schema.sql**，没有 .bak
-        · 根目录有个没提交的 temp-schema.sql（就是 dump 的中间产物）
-
-  21. 🔴【2026-10-08 发现 · **仍未解决**】bookshelf 的唯一约束没进库
-
-      ⚠⚠ 这条在 docs/项目笔记/14-书架系统.txt 里一度被记为"已确认存在
-         （问题 21 已解决）"。2026-10-08 用三个独立判据复核，**结论相反**：
-         约束不存在。这就是本项目最怕的**假阳性判据** ——
-         "看一眼觉得应该有"和"制造场景看它会不会失败"是两回事。
-
-      ── 判据 1：元数据（SHOW INDEX / SHOW CREATE TABLE）──
-        SHOW INDEX FROM book_db.bookshelf;
-        → 11 行 = PRIMARY + idx_bookshelf_top_create(5列) + idx_bookshelf_top_read(5列)
-        → **一个唯一约束都没有**
-        SELECT COUNT(*) FROM information_schema.statistics
-        WHERE table_schema='book_db' AND table_name='bookshelf'
-          AND non_unique=0 AND index_name<>'PRIMARY';        → **0**
-
-      ── 判据 2：换库排除 ──
-        SELECT ... WHERE index_name LIKE '%uk_bookshelf%';   → **空**
-        （3306 实例上所有 9 个库都没有，不是"查错库"）
-
-      ── 判据 3：★ 功能性判据（最硬）──
-        事务内连续插入两条 (user_id, novel_id) **完全相同**的记录：
-          INSERT INTO bookshelf (user_id, novel_id, ...) VALUES (999999, 999999, ...);
-          INSERT INTO bookshelf (user_id, novel_id, ...) VALUES (999999, 999999, ...);
-        → **两条都成功**，COUNT = 2（随后 ROLLBACK，无残留）
-        ⇒ 约束在功能上确实不存在，不只是"元数据没看到"
-
-      ── 但代码和设计里都是声明了的 ──
-        · entity/Bookshelf.java:20-25
-            @UniqueConstraint(name="uk_bookshelf_user_novel",
-                              columnNames = "userId,novelId")
-        · 设计文档第 37 / 85 / 175 / 260 / 395 / 1023 行都依赖它
-
-      ── 为什么没进库 ──
-        Hibernate 的 ddl-auto=update **建新表时会带上约束，
-        但不会给已经存在的表补约束**。这张表是先跑起来建出来的，
-        之后才把 @UniqueConstraint 加进实体 —— 于是约束永远差一步。
-      ★ 这又是决策 6 那句话的第二次验证：
-        "索引定义跟代码走"**只在建表那一刻成立**，表已在库里就不成立。
-
-      ── 后果（为什么是 🔴）──
-        设计文档 3.1「并发双击」写的是：
-        "其中一个会撞 uk_bookshelf_user_novel 抛 DataIntegrityViolationException"。
-        约束不在库里 ⇒ 并发两次 POST /bookshelfs **真的会插入两条记录**，
-        书架出现重复条目，且那条异常路径**永远不会触发** ——
-        功能是坏的，但一路不报错。
-        ★ 又一个"不报错 ≠ 正确"。
-
-      ── 修法（现在表里 0 行，是最省事的修复时机）──
-        ① 先查有没有重复数据（有的话加约束会直接失败）：
-             SELECT user_id, novel_id, COUNT(*) FROM bookshelf
-             GROUP BY user_id, novel_id HAVING COUNT(*) > 1;
-        ② dev 库手动补：
-             ALTER TABLE bookshelf
-               ADD UNIQUE KEY uk_bookshelf_user_novel (user_id, novel_id);
-        ③ 补完重新 dump schema.sql（顺带解决问题 20 的缺表部分）
-
-      ── 判据 ──
-        · 重跑判据 1 → 期望 1
-        · ★ 重跑判据 3 → 期望**第二条 INSERT 报错**
-          （这才是"制造一个必定失败的场景，看判据会不会报错"）
-
-  22. 🟠【2026-10-08 发现 · 未修】书架接口路径单复数，代码与设计对不上
-
-      ── 现象 ──
-        BookshelfController.java  → @RequestMapping("/bookshelfs")   复数
-        docs/设计/书架系统-设计方案.txt → 全篇写 /bookshelf            单数
-          （3.1 节 377 行、3.2 节 403 行、3.3~3.5 节、第 371 行白名单说明）
-
-      ── 为什么算问题 ──
-        两条路都能跑，但**必须二选一**，否则：
-        · 设计文档 / 接口文档 / 前端三处对不上
-        · 后续 3 个接口（top / delete / batch-remove）照抄就固化错误
-      ★ 项目现状本来就是混着的（/users、/novels 复数，/upload 单数），
-        所以这不是"哪个对"，而是**要有个决定并写进文档**。
-
-      ── 建议 ──
-        改成单数 /bookshelf（改动量 1 行），理由是设计文档、验证清单、
-        后续 3 个接口、前端调用全都写的是单数；
-        改设计文档的话要连着改 6 处。
-      ★ 动手前先确认 —— 这条属于"设计意图"，不是纯粹的现状偏差。
-
-  17. ✅【已实测通过（2026-10-07）】Dockerfile 的 JDK 版本与 pom 不匹配
-
-      ── 原问题（2026-10-05 发现）──
-      Dockerfile 第 2 行 / 第 9 行用的是 JDK / JRE **23**：
-        FROM maven:3.9-eclipse-temurin-23-alpine AS builder
-        FROM eclipse-temurin:23-jre-alpine
-      而 pom.xml 第 33 行是 <maven.compiler.release>25</maven.compiler.release>
-      ⇒ JDK 23 无法以 release 25 编译，docker compose up --build 会报
-        "release version 25 not supported" 直接失败。
-
-      ── ✅ 现状（2026-10-06 核对代码）──
-      Dockerfile 两处**都已改成 25**，与 pom 的 release 25 一致：
-        Dockerfile:2   FROM maven:3.9-eclipse-temurin-25-alpine AS builder
-        Dockerfile:9   FROM eclipse-temurin:25-jre-alpine
-
-      ── ✅ 实测结果（2026-10-07）──
-      `docker compose down -v && docker compose up --build`
-      镜像**构建成功** —— "release version 25 not supported" 那个错没有出现，
-      JDK 25 那两处改动是对的。
-
-      ★ 但**首次实测暴露了一个新问题**（见下方 18 号）：
-        应用起不来，报 Schema validation: missing table [chapter]。
-        ⇒ 17 号本身结了，但它挡在后面的那个问题才是真麻烦。
-
-      ── 背景（值得记住）──
-      升级 Java 25 时只改了 pom，忘了 Dockerfile。
-      ★ 教训：**版本号散落在多个文件里，改一处必须全库搜一遍**：
-        grep -rn "temurin\|java.version\|release>" Dockerfile pom.xml
-
-  18. ✅【2026-10-07 实测发现 · 当天已解决】Docker 里的 prod 撞上空库
-
-      ── 现象 ──
-      demo2-app 启动即 Exited(1)：
-        SchemaManagementException: Schema validation: missing table [chapter]
-      ★ 注意：报的是 chapter，但它只是**第一个被检查到的** ——
-        三张表其实都缺。
-
-      ── 根因：三件事叠加，缺一不发生 ──
-        ① compose 里 SPRING_PROFILES_ACTIVE=prod
-        ② prod 的 ddl-auto=validate  → **只校验、绝不建表**（设计正确）
-        ③ compose 的 MYSQL_DATABASE   → **只建库、绝不建表**
-      ＋ 项目里**没有任何 .sql 文件**（find 过）
-      ⇒ 开发库的表是 dev 的 update 模式**悄悄长出来的**，
-        只存在于本机硬盘上。**validate 在向一份不存在的合同对账。**
-      ⇒ 只要 volume 为空（新机器 / 删过 volume），**100% 复现**，不是偶发。
-
-      ── ✅ 修法（方案 A：MySQL 官方 initdb 机制）──
-        ① mysqldump -uroot -p****** --no-data --databases book_db \
-             > docker/mysql/init/01-schema.sql
-        ② docker-compose.yml 的 mysql 加挂载：
-             - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
-        ③ docker compose down -v && docker compose up --build
-
-      ── ★★ 两个必须记住的坑 ──
-        · init 脚本**只在数据目录为空时执行一次**。
-          不 `down -v` 就 up，脚本根本不会跑，你会得到**一模一样的报错**。
-        · 导出的 schema **必须验索引在不在**：
-            SHOW INDEX FROM book_db.novel;
-          应看到 3 行（PRIMARY + idx_novel_last_update_time
-          + idx_novel_category_last_update_time）。
-          漏了的话，"索引优化有实测数据"这条简历优势在线上等于零。
-
-      ── ★ 深层认知（面试可讲）──
-        **@Table(indexes=...)（决策 6）在 prod 的 validate 模式下
-        不产生任何 DDL。** 它在 dev 的 update 下会自动建索引，
-        但 prod 只校验不创建 —— 索引必须由 schema.sql / 迁移脚本显式创建。
-        ⇒ "索引定义跟代码走"这句话**只在 dev 成立**。
-
-      ── 已实测（2026-10-07）──
-        容器 3 个全 Up；GET /novels → body code=200；
-        chapter / novel / user 三张表齐全；novel 的 3 个索引齐全。
-        ★ 注意 content 为空数组 —— 导出用的是 --no-data，只带结构不带数据。
-        ★ 2026-10-08 回看：当时只有 3 张表（bookshelf 还没建），
-          所以那时的脚本是对的。现在有了 Bookshelf 实体，
-          这份"只有 3 张表"的脚本会让 prod 启动失败 —— 见问题 20。
-
-      ── 遗留待办 ──
-        · mysql 仍无 healthcheck（七·二 B1 待办）——
-          init 脚本会让 MySQL 首次启动多花 20-40 秒，
-          depends_on 只等 service_started ⇒ 更容易撞上"没就绪"
-        · 没有 .dockerignore：构建上下文 129M，其中 126M(98%) 是
-          novel-frontend/node_modules —— Dockerfile 一个字节都没用到
-        · 没有 schema 版本管理（Flyway/Liquibase）—— 第三梯队
-        · 前端不在 compose 里（见 七·二 B1：Nginx 托管 dist/）
-
-  【🟠 安全隐患（部署到公网前必须改）】
-
-  4. 上传只校验 Content-Type（客户端可伪造）
-     位置：FileController.upload
-     配合 /uploads/** 匿名静态映射 → 可上传 .html 造成存储型 XSS
-     修法：扩展名白名单 + 文件头 magic number 校验
-
-  5. passwordHash 被写进 Redis 缓存
-     位置：UserService.getCurrentUser
-     修法：缓存前 setPasswordHash(null)，或定义不含该字段的 CacheVO
-
-  6. CorsConfig 硬编码 localhost:5173
-     修法：提到配置文件
-
-  【🟡 数据/性能问题】
-
-  7. 排行榜没有防刷
-     位置：NovelServiceIml.readChapter
-     后果：F5 刷新即加热度，数据是假的
-     修法：同一用户对同一小说 N 分钟只计一次（SETNX）
-
-  8. 搜索的 keyword 没有 trim
-     位置：NovelSpecifications.titleContains
-     后果：输入 " 剑 " 会变成 LIKE '% 剑 %'，匹配不到"剑来"
-
-  9. Refresh Token 多设备会互相覆盖
-     位置：UserService.login / refresh
-     原因：user_refresh:{userId} 是 String，只能存一个 token
-     后果：A 设备登出会删掉 B 设备的 token，且自己没删干净
-     修法：改成 Hash 结构（field=token）或用 Set
-
-  ★ 新增（2026-10-07）：防击穿的 locks Map 只增不减
-     位置：NovelServiceIml.java:51 / 234
-       private final ConcurrentHashMap<Integer,Object> locks = new ConcurrentHashMap<>();
-       Object lock = locks.computeIfAbsent(novelId, k -> new Object());
-     → 访问过的每个 novelId 都永久留一个 Object，无界增长（内存泄漏隐患）
-     ★ 修法有坑：粗暴地 finally locks.remove(novelId) 会重新引入竞态
-       （remove 后到达的线程拿到新锁，和还在等旧锁的线程并发 → 击穿防护被削弱）
-       稳妥方案：换成 Caffeine（weakValues / expireAfterAccess），或 Redisson 分布式锁
-     ★ 同一处还有：单机锁 ≠ 分布式锁（多实例部署时每 JVM 各查一次库）
-
-  【🟢 代码质量问题】
-
-  ~~10. 测试类编译不过~~ → 已修（见第 🔴 区）
-  ~~14. 两个排行榜方法 100% 重复~~ → 已抽成 findRankingByKey
-
-  ~~11. JacksonConfig 用裸 new ObjectMapper() 覆盖了 Boot 的自动配置~~
-    → ★ 已解决：文件已删除（commit 8edf2ac「修复json的版本问题」时清掉）。
-      ★ 现在 UserService 注入的 tools.jackson.databind.ObjectMapper
-        是 Boot 自动配置的 Jackson 3 实例。
-      ★ 注意：其他文档里若还引用 JacksonConfig，都是过期条目。
-
-  12. NovelRankVO 字段名首字母大写
-      private Integer NovelId / Title / CoverUrl / Heat
-      违反命名规范，且 Jackson 序列化出的 key 是 novelId，前端读 item.NovelId 对不上
-
-  13. 前端"免费" tab 是死代码
-      位置：NovelListView.vue 第 11 行
-      原因：isFree 字段在 Novel 实体里不存在，点了等于没筛
-
-  15. 兜底异常用 log.warn 而非 log.error
-      位置：GlobalExceptionHandler.Exception(Exception e)
-      应该：error 级别，"不该发生的事发生了"
-
-  16. 404 被转成了 500
-      实测：PUT /novels/1（不存在的路径）返回
-            HTTP 200 + {"code":500,"msg":"系统繁忙，请稍后再试"}
-      原因：NoResourceFoundException 被兜底处理器捕获
-      修法：单独处理，返回 404
-
-  【🟢 2026-10-05 代码规范化时新发现（共 5 处，尚未修复）】
-    ★ 完整版（含修法、验证方法）见 docs/项目笔记/08-代码质量.txt
-
-    N1. ★ 黑名单过期判断的边界不一致        config/LoginInterceptor.java
-        游客路径用 >=，严格路径用 >（约 69 行 / 116 行）
-        → 同一逻辑两处实现不一致，是将来埋 bug 的典型位置
-        修法：抽成一个私有方法，两处共用
-
-    N2. passwordHash 被写进 Redis 缓存      service/UserService.java
-        getCurrentUser 第 4 步，dbUser 没清密码就序列化写缓存
-        （= 上面的安全隐患 5，只是位置更精确）
-
-    N3. LoginInterceptor 的空 catch 吞异常   config/LoginInterceptor.java
-        游客路径 catch 块（约 83 行），注释说"保持日志干净"
-        → 连"有人用伪造 token 扫描"都发现不了
-        修法：加 log.debug
-
-    ~~N4. 未使用的 import~~ ✅ 已解决（2026-10-07 核对）
-        Cacheable 的 import 已从 NovelServiceIml.java 清掉，
-        现在 import 区只剩 Cache / CacheEvict（后者仍被 6 处 @CacheEvict 使用）。
-
-    N5. 通配符 import                       service/NovelServiceIml.java
-        import java.util.*  → 展开成 6 个具体类
-        ★ 例外：NovelController 里的
-          org.springframework.web.bind.annotation.* 可以保留
-
-  【★ 其他待办】
-    · 缓存击穿 / 缓存雪崩 已于 2026-10-07 完成（见决策 10 末尾）
-    · 缓存与数据库一致性 未做
-    · 分布式锁 未做（当前击穿用的是单机锁）
+  ★★ 这一区已拆到独立文件 → docs/项目笔记/问题清单.txt
+     拆分日期 2026-10-10｜原因：这一区**只增不减**，占了本文件 1/3 的篇幅
+     （459 行），但只在"要改动代码 / 排查故障"时才需要看。
+     拆出去之后，日常对话不必每次把它读进上下文。
+
+  【活跃问题速查（只有这几条需要动手）】
+    🔴 20  schema.sql 编码 UTF-16LE      挡部署，MySQL 客户端读不了
+    🟡 23  top/remove 不过滤 deleted     软删掉的记录还能被置顶
+    🟡 24  remove 没删 Redis 进度 key    复活后旧阅读进度被写回
+    🟡   防击穿 locks Map 只增不减       无界增长（内存泄漏隐患）
+
+    【上线前必改 · 安全隐患 4/5/6】
+      4  上传只校验 Content-Type → 可存储型 XSS
+      5  passwordHash 被写进 Redis 缓存
+      6  CorsConfig 硬编码 localhost:5173
+
+    【数据/性能 7/8/9】
+      7  排行榜没有防刷（F5 即加热度）
+      8  搜索 keyword 没有 trim
+      9  Refresh Token 多设备互相覆盖
+
+  ★ 完整条目（含修法、判据、实测数据、已解决的历史记录、面试素材）
+    → docs/项目笔记/问题清单.txt
+  ★ 编号不是推进顺序，是"当时分配的编号"
+
+  【★★ 值得记住的三条元教训（正文在问题清单里）】
+    ① 判据本身也要验证 —— **两个方向都会骗你**：
+       假阳性（HTTP 200 不等于 body.code=200）、
+       假阴性（COUNT(*) 不等于 COUNT(DISTINCT index_name)，
+               会让"已经修好"被读成"没修好"）
+    ② "不报错"不等于"正确" —— 唯一约束缺失、建表脚本缺表、
+       兜底缺失，这三样**一个都不报错**，但功能是坏的
+    ③ 同一个状态存在两个地方时，两处的失效逻辑必须对齐 ——
+       缓存降级 / 唯一约束 / 阅读进度，都是同一个病
 
 
 ################################################################################
@@ -1250,6 +952,11 @@
   十五、配套文档索引
 ################################################################################
 
+  ★★ 根目录 AGENTS.md              ★ 每次自动加载的入口（最省 token）
+                                       红线 / 版本 / 关键设计决策 / 读取规矩
+                                       当前状态 / 活跃问题 / 输出偏好
+                                       ※ 保持精简，别往里堆细节
+
   docs/
   ├── 项目说明-给AI.txt              ★ 你正在看的这份（"项目是什么"）
   ├── 系统提示词-给AI.txt            ★ AI 行为守则（"AI 该怎么干活"）
@@ -1268,6 +975,10 @@
   │
   ├── 项目笔记/                      项目状态：现状盘点、待办清单
   │   ├── 00-项目总览.txt            ★ 全局状态入口（双轨制路线图在第七节）
+  │   │                                ★ 顶部有【最新交接】块，AI 每轮先读这里
+  │   ├── 问题清单.txt               ★★ 2026-10-10 从本文件拆出
+  │   │                                「已知问题与坑」全部内容 + 活跃问题速查索引
+  │   │                                ★ 只在"改代码 / 排错"时才读
   │   ├── 08-代码质量.txt            ★ N1-N5 五个新发现的问题在这里
   │   ├── 11-测试体系.txt            ★ 第五节「实战踩坑记录」最值钱
   │   ├── 14-书架系统.txt            ★ 2026-10-08 新增｜第 14 个**专项**笔记

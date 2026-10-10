@@ -10,5 +10,5 @@ import lombok.Data;
 @Data
 public class BookshelfTopDTO {
     @NotNull(message = "置顶状态不能为空")
-    private Integer top;   // 0 未置顶或 1置顶
+    private Boolean top;   // 0 未置顶或 1置顶
 }

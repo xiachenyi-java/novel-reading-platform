@@ -3,6 +3,7 @@ package com.example2.demo2.controller;
 import com.example2.demo2.common.Result;
 import com.example2.demo2.common.UserContext;
 import com.example2.demo2.dto.BookshelfAddDTO;
+import com.example2.demo2.dto.BookshelfBatchDeleteDTO;
 import com.example2.demo2.dto.BookshelfTopDTO;
 import com.example2.demo2.entity.Bookshelf;
 import com.example2.demo2.enums.BookshelfSort;
@@ -20,7 +21,7 @@ import org.springframework.web.bind.annotation.*;
  * 2026/10/816:48
  */
 @RestController
-@RequestMapping("/bookshelfs")
+@RequestMapping("/bookshelf")
 @RequiredArgsConstructor
 public class BookshelfController {
 
@@ -51,13 +52,35 @@ public class BookshelfController {
     }
 
     @Operation(summary = "置顶/取消置顶")
-    @PutMapping
-    public Result<Bookshelf> top(@PathVariable  Integer id,
-                                 @RequestParam @Valid BookshelfTopDTO dto){
+    @PutMapping("/{id}/top")
+    public Result<Void> top(@PathVariable  Integer id,
+                                 @RequestBody  @Valid BookshelfTopDTO dto){
 
         Integer userId = UserContext.getUser().getUserId();
 
-        return Result.success(iBookshelfService.top(userId,id,dto.getTop()));
+        iBookshelfService.top(userId,id,dto.getTop());
+
+        return Result.success();
     }
 
+    @Operation(summary = "移除书架")
+    @DeleteMapping("/{id}")
+    public Result<Void> delete(
+            @PathVariable  Integer id) {
+
+        Integer userId = UserContext.getUser().getUserId();
+
+        iBookshelfService.remove(userId, id);
+
+        return Result.success();
+    }
+
+
+    @Operation(summary = "批量移出书架")
+    @PostMapping("/batch-remove")                    // ★ POST 不是 DELETE
+    public Result<Void> batchRemove(@RequestBody @Valid BookshelfBatchDeleteDTO dto) {
+        Integer userId = UserContext.getUser().getUserId();
+        iBookshelfService.batchRemove(userId, dto.getIds());
+        return Result.success();
+    }
 }

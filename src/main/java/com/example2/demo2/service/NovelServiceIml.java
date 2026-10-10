@@ -1,8 +1,10 @@
 package com.example2.demo2.service;
 
+import com.example2.demo2.common.UserContext;
 import com.example2.demo2.common.exception.BusinessException;
 import com.example2.demo2.dto.ChapterDTO;
 import com.example2.demo2.dto.NovelDTO;
+import com.example2.demo2.dto.UserContextDTO;
 import com.example2.demo2.entity.Chapter;
 import com.example2.demo2.entity.Novel;
 import com.example2.demo2.repository.ChapterRepository;
@@ -49,6 +51,7 @@ public class NovelServiceIml implements INovelService {
     private final StringRedisTemplate stringRedisTemplate;
     private final CacheManager cacheManager;
     private final ConcurrentHashMap<Integer,Object> locks = new ConcurrentHashMap<>();
+    private final IBookshelfService bookshelfService;
 
     // ========== 1. 创建小说 ==========
     @Override
@@ -238,7 +241,7 @@ public class NovelServiceIml implements INovelService {
             return cached;
         }
 
-        Object lock =locks.computeIfAbsent(novelId, k -> new Object());
+        Object lock = locks.computeIfAbsent(novelId, k -> new Object());
         synchronized (lock) {
             Object nullMark2 = null;
             try {
@@ -331,6 +334,18 @@ public class NovelServiceIml implements INovelService {
                 String.valueOf(novelId),
                 1);
         stringRedisTemplate.expire(dailyRankKey, 2, TimeUnit.DAYS);
+
+        // ========== 记录阅读进度（仅登录用户）==========
+        UserContextDTO current = UserContext.getUser();
+        if (current != null && current.getUserId() != null) {
+            bookshelfService.updateProgress(
+                    current.getUserId(),
+                    novelId,
+                    chapterId,
+                    chapter.getChapterNumber()
+            );
+        }
+// 游客阅读：不记录进度，直接返回
 
         return chapter;
     }
