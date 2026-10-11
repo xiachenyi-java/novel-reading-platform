@@ -9,6 +9,11 @@ const routes = [
   { path: '/login', name: 'login', component: LoginView },
   { path: '/register', name: 'register', component: () => import('../views/RegisterView.vue') },
   { path: '/ranking', name: 'ranking', component: () => import('../views/RankingView.vue') },
+{ path: '/about',    name: 'about',    component: () => import('../views/static/AboutView.vue') },
+{ path: '/contact',  name: 'contact',  component: () => import('../views/static/ContactView.vue') },
+{ path: '/terms',    name: 'terms',    component: () => import('../views/static/TermsView.vue') },
+{ path: '/privacy',  name: 'privacy',  component: () => import('../views/static/PrivacyView.vue') },
+{ path: '/feedback', name: 'feedback', component: () => import('../views/static/FeedbackView.vue') },
   {
     path: '/novels/:novelId/chapters/:chapterId',
     name: 'chapterRead',
@@ -24,7 +29,8 @@ const routes = [
     path: '/write',
     name: 'write',
     component: () => import('../views/WriteNovel.vue'),
-    meta: { requiresAuth: true }
+    // ★ 改了：加 role 限制，普通用户即使有 token 也不能进发书页
+    meta: { requiresAuth: true, role: 'ADMIN' }
   },
 ]
 
@@ -35,11 +41,20 @@ const router = createRouter({
 
 router.beforeEach((to, from, next) => {
   const token = localStorage.getItem('token')
+  const role = localStorage.getItem('role')
+
+  // 需要登录的页面
   if (to.meta.requiresAuth && !token) {
-    next({ path: '/login', query: { redirect: to.fullPath } })
-  } else {
-    next()
+    return next({ path: '/login', query: { redirect: to.fullPath } })
   }
+
+  // 需要管理员
+  if (to.meta.role && to.meta.role !== role) {
+    return next({ path: '/' })
+  }
+
+  // 其他一律放行（游客可看）
+  next()
 })
 
 export default router

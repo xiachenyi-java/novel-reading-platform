@@ -31,7 +31,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { readChapter } from '../api/novel'
+import { readChapter, getNovelDetail } from '../api/novel'
 
 const route = useRoute()
 const router = useRouter()
@@ -42,20 +42,43 @@ const chapterId = Number(route.params.chapterId)
 const chapter = ref(null)
 const loading = ref(false)
 
-// 小说标题（从路由参数或 store 获取，这里简单从 localStorage 或传参）
-// 更好的方式是从详情页传递，但为了简单，我们通过路由 state 或再次请求
-// 暂用路由 query 或 state
+// 小说标题
 const novelTitle = ref(route.query.novelTitle || '小说')
 
-// 获取章节内容
+// 章节列表：优先从 history.state 拿（快速渲染），
+// 但无论如何都会自己拉一次完整列表，保证刷新后上下章仍可用
+const chapters = ref([])
+
+// ===== 拉取章节列表 =====
+const fetchChapterList = async () => {
+  try {
+    const res = await getNovelDetail(novelId)
+    const data = res.data.data || res.data
+    const list =
+      data.chapters ||
+      data.chapterList ||
+      (data.novel && (data.novel.chapters || data.novel.chapterList)) ||
+      []
+    if (Array.isArray(list) && list.length) {
+      chapters.value = list
+    }
+  } catch (e) {
+    console.warn('拉取章节列表失败，仅使用本地 state 中的列表', e)
+  }
+}
+
+// ===== 拉取章节正文 =====
 const fetchChapter = async () => {
   if (!novelId || !chapterId) return
   loading.value = true
   try {
     const res = await readChapter(novelId, chapterId)
-    // 后端返回 Result<Chapter>
     const data = res.data.data || res.data
     chapter.value = data
+    // 顺便更新一下标题（如果后端返回了 novelTitle）
+    if (data.novelTitle) {
+      novelTitle.value = data.novelTitle
+    }
   } catch (error) {
     console.error('加载章节失败:', error)
     ElMessage.error('加载章节失败')
@@ -64,15 +87,12 @@ const fetchChapter = async () => {
   }
 }
 
-// 上一章/下一章（需要知道总章节数和当前索引，简单处理：通过路由传递章节ID列表）
-// 这里简化：假设我们只知道当前章节ID，无法自动获取前后，所以需要从详情页传递章节列表
-// 我们通过路由 state 传递章节数组
-const chapters = ref([]) // 从路由 state 获取
+// ===== 上下章计算 =====
 const currentIndex = computed(() => {
   return chapters.value.findIndex(c => c.id === chapterId)
 })
 const hasPrev = computed(() => currentIndex.value > 0)
-const hasNext = computed(() => currentIndex.value < chapters.value.length - 1)
+const hasNext = computed(() => currentIndex.value >= 0 && currentIndex.value < chapters.value.length - 1)
 
 const prevChapter = () => {
   if (hasPrev.value) {
@@ -96,12 +116,14 @@ const nextChapter = () => {
   }
 }
 
-onMounted(() => {
-  // 从路由 state 获取章节列表
+onMounted(async () => {
+  // 先吃 history.state 里的快速数据（如果有）
   if (history.state?.chapters) {
     chapters.value = history.state.chapters
   }
-  fetchChapter()
+  // 无论有没有 state，都自己拉一次，保证刷新后可用
+  await fetchChapterList()
+  await fetchChapter()
 })
 </script>
 

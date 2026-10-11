@@ -6,15 +6,27 @@ const apiClient = axios.create({
 })
 
 // 请求拦截器：自动带 Token
-apiClient.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      const hadToken = !!localStorage.getItem('token')
+      localStorage.removeItem('token')
+      localStorage.removeItem('refreshToken')
+      localStorage.removeItem('username')
+      localStorage.removeItem('role')
+
+      // 只有"本来登录着"的用户被踢下线才跳登录页
+      // 游客访问需要登录的接口，让页面自己处理，不要强跳
+      if (hadToken) {
+        const current = window.location.pathname + window.location.search
+        if (!current.startsWith('/login')) {
+          window.location.href = `/login?redirect=${encodeURIComponent(current)}`
+        }
+      }
     }
-    return config
-  },
-  (error) => Promise.reject(error)
+    return Promise.reject(error)
+  }
 )
 
 // 响应拦截器：统一处理 401
@@ -22,10 +34,16 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
+      // ★ 改了：保留当前路径，登录后能跳回来，不再无脑跳到 /login
       localStorage.removeItem('token')
+      localStorage.removeItem('refreshToken')
       localStorage.removeItem('username')
       localStorage.removeItem('role')
-      window.location.href = '/login'
+
+      const current = window.location.pathname + window.location.search
+      if (!current.startsWith('/login')) {
+        window.location.href = `/login?redirect=${encodeURIComponent(current)}`
+      }
     }
     return Promise.reject(error)
   }

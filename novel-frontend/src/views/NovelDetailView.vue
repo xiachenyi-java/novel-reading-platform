@@ -123,6 +123,7 @@
         :model="editChapterForm"
         :rules="chapterRules"
         label-width="80px"
+        v-loading="editLoading"
       >
         <el-form-item label="章节标题" prop="title">
           <el-input v-model="editChapterForm.title" placeholder="请输入章节标题" />
@@ -150,14 +151,15 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { 
-  getNovelDetail, 
-  deleteNovel, 
+import {
+  getNovelDetail,
+  deleteNovel,
   addChapter,
   updateChapter,
-  deleteChapter
+  deleteChapter,
+  // ★ 新增：编辑章节前需要拉全文
+  readChapter
 } from '../api/novel'
-// ★ 新增：加入书架接口
 import { addToBookshelf } from '../api/bookshelf'
 
 const route = useRoute()
@@ -182,6 +184,7 @@ const chapterRules = {
 // ====== 编辑章节 ======
 const showEditChapter = ref(false)
 const editSubmitting = ref(false)
+const editLoading = ref(false)
 const editChapterFormRef = ref(null)
 const editChapterForm = ref({ id: null, title: '', content: '' })
 
@@ -238,12 +241,35 @@ const submitChapter = async () => {
   })
 }
 
-// ====== 打开编辑对话框 ======
-const openEditChapter = (chapter) => {
+// ====== ★ 打开编辑对话框：先确认有正文，没有就从后端拉全文 ======
+const openEditChapter = async (chapter) => {
+  let content = chapter.content || ''
+  // 目录接口通常不返回正文，如果为空，调 readChapter 拉全文
+  if (!content) {
+    editLoading.value = true
+    try {
+      const res = await readChapter(route.params.id, chapter.id)
+      const data = res.data.data || res.data
+      content = data.content || ''
+    } catch (e) {
+      console.error('拉取章节正文失败:', e)
+      ElMessage.error('拉取章节正文失败，请稍后重试')
+      editLoading.value = false
+      return
+    } finally {
+      editLoading.value = false
+    }
+  }
+
+  if (!content) {
+    ElMessage.warning('未获取到章节正文，无法编辑')
+    return
+  }
+
   editChapterForm.value = {
     id: chapter.id,
     title: chapter.title,
-    content: chapter.content || ''
+    content
   }
   showEditChapter.value = true
 }
@@ -318,7 +344,7 @@ const startReading = () => {
   goRead(chapters.value[0].id)
 }
 
-// ====== ★ 加入书架（真实调用）======
+// ====== 加入书架 ======
 const handleAddToShelf = async () => {
   const token = localStorage.getItem('token')
   if (!token) {
@@ -347,7 +373,7 @@ const handleAddToShelf = async () => {
   }
 }
 
-// ====== 通用动作（保留给“打分”等模拟功能）======
+// ====== 通用动作 ======
 const handleAction = (action) => {
   const token = localStorage.getItem('token')
   if (!token) {

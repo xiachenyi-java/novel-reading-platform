@@ -62,7 +62,9 @@ export const readChapter = (novelId, chapterId) => {
 // ===== 获取全部分类 =====
 export const getCategories = () => apiClient.get('/novels/categories')
 
-// ===== 排行榜（仅总榜） =====
-export const getRanking = (top = 10) => {
-  return apiClient.get(`/novels/ranking?top=${top}`)
+// ===== 排行榜 =====
+// type: 'total' 总榜 | 'daily' 日榜
+// ★ 改了：新增 type 参数，之前日榜/总榜切换无效是因为这里只传了 top
+export const getRanking = (top = 10, type = 'total') => {
+  return apiClient.get(`/novels/ranking?top=${top}&type=${type}`)
 }

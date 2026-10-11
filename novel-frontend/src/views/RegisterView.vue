@@ -1,96 +1,201 @@
 <template>
-  <div class="register-wrapper">
-    <!-- 动态粒子背景 -->
-    <div class="particles" ref="particlesContainer"></div>
-
-    <!-- 浮动光晕 -->
-    <div class="glow glow-1"></div>
-    <div class="glow glow-2"></div>
-
-    <!-- 注册卡片 -->
-    <div class="register-card">
-      <div class="card-header">
-        <div class="book-icon">
-          <div class="book-cover"></div>
-          <div class="book-spine"></div>
-          <div class="book-page"></div>
-          <div class="book-glow"></div>
+  <div class="register-page">
+    <!-- ===== 顶部品牌栏 ===== -->
+    <header class="register-header">
+      <div class="header-inner">
+        <div class="brand" @click="$router.push('/')">
+          <span class="brand-icon">📚</span>
+          <span class="brand-name">夏辰义的书城</span>
         </div>
-        <h1>夏辰义的书城</h1>
-        <p>加入我们，开始你的创作之旅</p>
+        <div class="header-right">
+          <span class="tip">已有账号？</span>
+          <a class="link" @click.prevent="$router.push('/login')">立即登录</a>
+        </div>
       </div>
+    </header>
 
-      <el-form @keyup.enter="handleRegister" class="register-form">
-        <el-form-item>
-          <el-input
-            v-model="username"
-            placeholder="用户名（3-20位）"
-            prefix-icon="User"
-            size="large"
-            class="custom-input"
-          />
-        </el-form-item>
-
-        <el-form-item>
-          <el-input
-            v-model="password"
-            type="password"
-            placeholder="密码（至少6位）"
-            prefix-icon="Lock"
-            size="large"
-            show-password
-            class="custom-input"
-          />
-        </el-form-item>
-
-        <el-form-item>
-          <el-input
-            v-model="confirmPassword"
-            type="password"
-            placeholder="确认密码"
-            prefix-icon="Lock"
-            size="large"
-            show-password
-            class="custom-input"
-          />
-        </el-form-item>
-
-        <el-form-item>
-          <el-button
-            type="primary"
-            size="large"
-            :loading="loading"
-            @click="handleRegister"
-            class="register-btn"
-          >
-            {{ loading ? '注册中...' : '立即注册' }}
-          </el-button>
-        </el-form-item>
-
-        <div class="card-footer">
-          <span>已有账号？</span>
-          <a href="#" @click.prevent="$router.push('/login')">立即登录</a>
+    <!-- ===== 主体 ===== -->
+    <main class="register-main">
+      <div class="main-inner">
+        <!-- 左：插画 + 标语 -->
+        <div class="illustration">
+          <div class="scene">
+            <div class="cloud cloud-1"></div>
+            <div class="cloud cloud-2"></div>
+            <div class="cloud cloud-3"></div>
+            <div class="book">
+              <div class="book-cover"></div>
+              <div class="book-page"></div>
+              <div class="book-spine"></div>
+            </div>
+            <div class="figure">✍️</div>
+          </div>
+          <h2 class="slogan">加入我们，开始你的阅读之旅</h2>
+          <p class="sub-slogan">收藏好书 · 分享书单 · 找到同好</p>
         </div>
-      </el-form>
-    </div>
+
+        <!-- 右：注册卡片 -->
+        <div class="register-card">
+          <h1 class="card-title">注册新账号</h1>
+          <p class="card-subtitle">只需几秒，即可开启你的书城之旅</p>
+
+          <el-form
+            @keyup.enter="handleRegister"
+            class="register-form"
+            label-position="top"
+          >
+            <el-form-item>
+              <el-input
+                v-model="username"
+                placeholder="用户名（3-20位）"
+                size="large"
+                class="custom-input"
+                maxlength="20"
+                show-word-limit
+              >
+                <template #prefix>
+                  <el-icon><User /></el-icon>
+                </template>
+              </el-input>
+            </el-form-item>
+
+            <el-form-item>
+              <el-input
+                v-model="password"
+                type="password"
+                placeholder="密码（至少6位）"
+                size="large"
+                show-password
+                class="custom-input"
+              >
+                <template #prefix>
+                  <el-icon><Lock /></el-icon>
+                </template>
+              </el-input>
+            </el-form-item>
+
+            <el-form-item>
+              <el-input
+                v-model="confirmPassword"
+                type="password"
+                placeholder="确认密码"
+                size="large"
+                show-password
+                class="custom-input"
+              >
+                <template #prefix>
+                  <el-icon><Lock /></el-icon>
+                </template>
+              </el-input>
+            </el-form-item>
+
+            <!-- 密码强度提示（可选，实时显示） -->
+            <div v-if="password" class="strength-bar">
+              <div class="strength-label">密码强度：</div>
+              <div class="strength-track">
+                <div
+                  class="strength-fill"
+                  :class="strengthClass"
+                  :style="{ width: strengthPercent + '%' }"
+                ></div>
+              </div>
+              <span class="strength-text" :class="strengthClass">{{ strengthText }}</span>
+            </div>
+
+            <div class="agreement">
+              <el-checkbox v-model="agreed" size="small">
+                我已阅读并同意
+                <router-link
+                  class="link"
+                  to="/terms"
+                  target="_blank"
+                  @click.stop
+                >《用户服务协议》</router-link>
+                和
+                <router-link
+                  class="link"
+                  to="/privacy"
+                  target="_blank"
+                  @click.stop
+                >《隐私政策》</router-link>
+              </el-checkbox>
+            </div>
+
+            <el-button
+              type="primary"
+              size="large"
+              :loading="loading"
+              @click="handleRegister"
+              class="submit-btn"
+            >
+              {{ loading ? '注册中...' : '立即注册' }}
+            </el-button>
+
+            <div class="form-footer">
+              <span>已有账号？</span>
+              <a class="link" @click.prevent="$router.push('/login')">立即登录</a>
+            </div>
+          </el-form>
+        </div>
+      </div>
+    </main>
+
+    <!-- ===== 底部 Footer（已抽成组件）===== -->
+    <SiteFooter />
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
+import { User, Lock } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { register } from '../api/user'
+import SiteFooter from '../components/SiteFooter.vue'
 
 const router = useRouter()
+
 const username = ref('')
 const password = ref('')
 const confirmPassword = ref('')
+const agreed = ref(false)
 const loading = ref(false)
-const particlesContainer = ref(null)
-let animationId = null
 
-// ========== 注册方法 ==========
+// ===== 密码强度计算 =====
+const strengthScore = computed(() => {
+  const pwd = password.value
+  if (!pwd) return 0
+  let score = 0
+  if (pwd.length >= 6) score++
+  if (pwd.length >= 10) score++
+  if (/[a-z]/.test(pwd) && /[A-Z]/.test(pwd)) score++
+  if (/\d/.test(pwd)) score++
+  if (/[^a-zA-Z0-9]/.test(pwd)) score++
+  return Math.min(score, 4)
+})
+
+const strengthPercent = computed(() => {
+  if (!password.value) return 0
+  return (strengthScore.value / 4) * 100
+})
+
+const strengthClass = computed(() => {
+  const s = strengthScore.value
+  if (s <= 1) return 'weak'
+  if (s === 2) return 'medium'
+  if (s === 3) return 'good'
+  return 'strong'
+})
+
+const strengthText = computed(() => {
+  const s = strengthScore.value
+  if (s <= 1) return '弱'
+  if (s === 2) return '中'
+  if (s === 3) return '良好'
+  return '强'
+})
+
+// ===== 注册 =====
 const handleRegister = async () => {
   if (!username.value || username.value.length < 3 || username.value.length > 20) {
     ElMessage.warning('用户名长度需为 3-20 位')
@@ -104,13 +209,16 @@ const handleRegister = async () => {
     ElMessage.warning('两次输入的密码不一致')
     return
   }
+  if (!agreed.value) {
+    ElMessage.warning('请先阅读并同意用户服务协议')
+    return
+  }
 
   loading.value = true
   try {
     const res = await register(username.value, password.value)
     if (res.data.code === 200) {
       ElMessage.success('注册成功！请登录')
-      // 注册成功后跳转登录页
       router.push('/login')
     } else {
       ElMessage.error(res.data.msg || '注册失败')
@@ -123,301 +231,310 @@ const handleRegister = async () => {
     loading.value = false
   }
 }
-
-// ========== 粒子背景动画 ==========
-onMounted(() => {
-  const container = particlesContainer.value
-  if (!container) return
-
-  const canvas = document.createElement('canvas')
-  container.appendChild(canvas)
-  const ctx = canvas.getContext('2d')
-
-  const resize = () => {
-    canvas.width = container.clientWidth
-    canvas.height = container.clientHeight
-  }
-  resize()
-  window.addEventListener('resize', resize)
-
-  const particles = []
-  const count = 120
-
-  for (let i = 0; i < count; i++) {
-    particles.push({
-      x: Math.random() * canvas.width,
-      y: Math.random() * canvas.height,
-      radius: Math.random() * 2 + 1,
-      dx: (Math.random() - 0.5) * 0.5,
-      dy: (Math.random() - 0.5) * 0.5,
-    })
-  }
-
-  function animate() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    for (const p of particles) {
-      p.x += p.dx
-      p.y += p.dy
-      if (p.x < 0 || p.x > canvas.width) p.dx *= -1
-      if (p.y < 0 || p.y > canvas.height) p.dy *= -1
-      ctx.beginPath()
-      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2)
-      ctx.fillStyle = 'rgba(255,255,255,0.6)'
-      ctx.fill()
-    }
-    for (let i = 0; i < particles.length; i++) {
-      for (let j = i + 1; j < particles.length; j++) {
-        const dx = particles[i].x - particles[j].x
-        const dy = particles[i].y - particles[j].y
-        const dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist < 120) {
-          ctx.beginPath()
-          ctx.moveTo(particles[i].x, particles[i].y)
-          ctx.lineTo(particles[j].x, particles[j].y)
-          ctx.strokeStyle = `rgba(255,255,255,${0.15 * (1 - dist / 120)})`
-          ctx.lineWidth = 0.5
-          ctx.stroke()
-        }
-      }
-    }
-    animationId = requestAnimationFrame(animate)
-  }
-  animate()
-})
-
-onUnmounted(() => {
-  if (animationId) {
-    cancelAnimationFrame(animationId)
-  }
-})
 </script>
 
 <style scoped>
-.register-wrapper {
-  position: relative;
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
-  background: linear-gradient(135deg, #0c0e1a 0%, #1a1040 40%, #2d1b69 100%);
+* { box-sizing: border-box; }
+
+.register-page {
+  min-height: 100vh;
+  background: #f7f8fa;
   display: flex;
-  justify-content: center;
-  align-items: center;
-  font-family: 'Segoe UI', sans-serif;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
-.particles {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
+/* ===== 顶部品牌栏 ===== */
+.register-header {
+  background: #fff;
+  border-bottom: 1px solid #f0f0f0;
+  height: 60px;
+  flex-shrink: 0;
+}
+.header-inner {
+  max-width: 1200px;
   height: 100%;
-  pointer-events: none;
-  z-index: 0;
+  margin: 0 auto;
+  padding: 0 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
-
-.glow {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.3;
-  pointer-events: none;
-  z-index: 0;
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
 }
-.glow-1 {
-  width: 400px;
-  height: 400px;
-  background: #7c3aed;
-  top: -100px;
-  right: -100px;
-  animation: floatGlow 8s ease-in-out infinite alternate;
-}
-.glow-2 {
-  width: 350px;
-  height: 350px;
-  background: #06b6d4;
-  bottom: -80px;
-  left: -80px;
-  animation: floatGlow 10s ease-in-out infinite alternate-reverse;
-}
-
-@keyframes floatGlow {
-  0% { transform: translate(0, 0) scale(1); }
-  100% { transform: translate(40px, 40px) scale(1.2); }
-}
-
-.register-card {
-  position: relative;
-  z-index: 1;
-  width: 420px;
-  padding: 48px 40px 36px;
-  background: rgba(255, 255, 255, 0.07);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border-radius: 32px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 40px 80px rgba(0, 0, 0, 0.6);
-  animation: cardEntry 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  opacity: 0;
-  transform: translateY(30px);
-}
-
-@keyframes cardEntry {
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.card-header {
-  text-align: center;
-  margin-bottom: 32px;
-}
-
-.card-header h1 {
-  font-size: 28px;
+.brand-icon { font-size: 24px; }
+.brand-name {
+  font-size: 20px;
   font-weight: 700;
-  color: #ffffff;
-  letter-spacing: 2px;
-  margin: 0 0 6px 0;
-  background: linear-gradient(135deg, #e0d7ff, #a78bfa);
+  background: linear-gradient(135deg, #7c3aed, #4f46e5);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
-.card-header p {
-  color: rgba(255, 255, 255, 0.5);
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 14px;
-  letter-spacing: 2px;
-  margin: 0;
+}
+.header-right .tip { color: #999; }
+.link {
+  color: #7c3aed;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+.link:hover { color: #4f46e5; }
+
+/* ===== 主体 ===== */
+.register-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+}
+.main-inner {
+  width: 100%;
+  max-width: 1080px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 60px;
 }
 
-.register-form {
-  margin-top: 8px;
+/* ===== 左侧插画 ===== */
+.illustration {
+  flex: 1;
+  text-align: center;
+  padding: 20px;
+}
+.scene {
+  position: relative;
+  height: 320px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cloud {
+  position: absolute;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #e0e7ff, #c7d2fe);
+  filter: blur(1px);
+  opacity: 0.85;
+}
+.cloud-1 { width: 180px; height: 90px; left: 10%; top: 20%; }
+.cloud-2 { width: 220px; height: 110px; right: 5%; top: 55%; }
+.cloud-3 { width: 140px; height: 70px; left: 20%; bottom: 8%; }
+
+.book {
+  position: relative;
+  width: 140px;
+  height: 170px;
+  z-index: 2;
+  animation: floatBook 4s ease-in-out infinite;
+}
+.book-cover {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(145deg, #a78bfa, #6d28d9);
+  border-radius: 8px 14px 14px 8px;
+  box-shadow: 0 20px 40px rgba(124, 58, 237, 0.35), inset -3px 0 12px rgba(255,255,255,0.15);
+  transform: rotate(-6deg);
+}
+.book-page {
+  position: absolute;
+  right: -8px;
+  top: 6px;
+  bottom: 6px;
+  width: 14px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.1), rgba(255,255,255,0.4));
+  border-radius: 0 6px 6px 0;
+  transform: rotate(-6deg);
+}
+.book-spine {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  bottom: 6px;
+  width: 10px;
+  background: linear-gradient(180deg, #8b5cf6, #4c1d95);
+  border-radius: 4px;
+  transform: rotate(-6deg);
+  box-shadow: inset -2px 0 8px rgba(0,0,0,0.2);
+}
+.figure {
+  position: absolute;
+  right: 20%;
+  top: 18%;
+  font-size: 56px;
+  z-index: 3;
+  animation: floatFigure 4.5s ease-in-out infinite;
+}
+@keyframes floatBook {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+@keyframes floatFigure {
+  0%, 100% { transform: translateY(0) rotate(-4deg); }
+  50% { transform: translateY(-10px) rotate(4deg); }
+}
+
+.slogan {
+  font-size: 26px;
+  font-weight: 700;
+  color: #4c1d95;
+  letter-spacing: 2px;
+  margin: 30px 0 10px;
+}
+.sub-slogan {
+  font-size: 14px;
+  color: #888;
+  letter-spacing: 1px;
+}
+
+/* ===== 右侧注册卡 ===== */
+.register-card {
+  flex-shrink: 0;
+  width: 400px;
+  background: #fff;
+  border-radius: 12px;
+  padding: 36px 40px 28px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
+  border: 1px solid #f0f0f0;
+}
+.card-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin: 0 0 6px;
+  text-align: center;
+}
+.card-subtitle {
+  font-size: 13px;
+  color: #999;
+  text-align: center;
+  margin: 0 0 24px;
+}
+
+/* 输入框 */
+.register-form :deep(.el-form-item) {
+  margin-bottom: 16px;
 }
 .custom-input :deep(.el-input__wrapper) {
-  background: rgba(255, 255, 255, 0.06) !important;
-  border: 1px solid rgba(255, 255, 255, 0.08) !important;
-  border-radius: 14px !important;
-  box-shadow: none !important;
-  transition: all 0.3s ease;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px #e5e7eb inset;
+  padding: 4px 12px;
+  transition: all 0.2s;
 }
 .custom-input :deep(.el-input__wrapper:hover) {
-  border-color: rgba(255, 255, 255, 0.2) !important;
+  box-shadow: 0 0 0 1px #c4b5fd inset;
 }
 .custom-input :deep(.el-input__wrapper.is-focus) {
-  border-color: #8b5cf6 !important;
-  box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.15) !important;
-}
-.custom-input :deep(.el-input__inner) {
-  color: #fff !important;
-  font-size: 15px;
+  box-shadow: 0 0 0 1px #7c3aed inset, 0 0 0 3px rgba(124, 58, 237, 0.1);
 }
 .custom-input :deep(.el-input__prefix) {
-  color: rgba(255, 255, 255, 0.3) !important;
+  color: #9ca3af;
 }
-.custom-input :deep(.el-input__suffix) {
-  color: rgba(255, 255, 255, 0.3) !important;
+.custom-input :deep(.el-input__inner) {
+  height: 40px;
+  font-size: 14px;
 }
 
-.register-btn {
+/* 密码强度 */
+.strength-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -6px 0 14px;
+  font-size: 12px;
+}
+.strength-label {
+  color: #999;
+  flex-shrink: 0;
+}
+.strength-track {
+  flex: 1;
+  height: 4px;
+  background: #f0f0f0;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.strength-fill {
+  height: 100%;
+  transition: width 0.3s, background 0.3s;
+  border-radius: 2px;
+}
+.strength-fill.weak { background: #ef4444; }
+.strength-fill.medium { background: #f59e0b; }
+.strength-fill.good { background: #10b981; }
+.strength-fill.strong { background: #7c3aed; }
+.strength-text { flex-shrink: 0; font-weight: 500; }
+.strength-text.weak { color: #ef4444; }
+.strength-text.medium { color: #f59e0b; }
+.strength-text.good { color: #10b981; }
+.strength-text.strong { color: #7c3aed; }
+
+/* 协议 */
+.agreement {
+  margin: 6px 0 20px;
+}
+.agreement :deep(.el-checkbox__label) {
+  font-size: 12px;
+  color: #999;
+}
+.agreement .link {
+  font-size: 12px;
+}
+
+/* 提交按钮 */
+.submit-btn {
   width: 100%;
-  height: 50px;
-  border-radius: 14px !important;
+  height: 48px;
+  border-radius: 8px !important;
   background: linear-gradient(135deg, #7c3aed, #4f46e5) !important;
   border: none !important;
   font-size: 16px;
   font-weight: 600;
-  letter-spacing: 1px;
-  transition: all 0.3s ease !important;
-  box-shadow: 0 8px 24px rgba(79, 70, 229, 0.35) !important;
-  margin-top: 4px;
+  letter-spacing: 4px;
+  box-shadow: 0 6px 20px rgba(79, 70, 229, 0.3) !important;
+  transition: all 0.2s !important;
 }
-.register-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 32px rgba(79, 70, 229, 0.5) !important;
+.submit-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(79, 70, 229, 0.4) !important;
 }
-.register-btn:active {
-  transform: scale(0.97);
+.submit-btn:active {
+  transform: translateY(0);
 }
 
-.card-footer {
+/* 底部 */
+.form-footer {
   text-align: center;
-  margin-top: 20px;
-  color: rgba(255, 255, 255, 0.35);
+  margin-top: 18px;
   font-size: 14px;
+  color: #999;
 }
-.card-footer a {
-  color: #a78bfa;
-  text-decoration: none;
-  font-weight: 500;
+.form-footer .link {
   margin-left: 6px;
-  transition: color 0.2s;
-}
-.card-footer a:hover {
-  color: #c4b5fd;
+  font-weight: 500;
 }
 
-/* ====== 书籍图标 ====== */
-.book-icon {
-  position: relative;
-  width: 64px;
-  height: 64px;
-  margin: 0 auto 12px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
+/* ===== 响应式 ===== */
+@media (max-width: 900px) {
+  .illustration { display: none; }
+  .main-inner { justify-content: center; gap: 0; }
 }
-.book-cover {
-  position: absolute;
-  width: 48px;
-  height: 56px;
-  background: linear-gradient(145deg, #a78bfa, #6d28d9);
-  border-radius: 4px 8px 8px 4px;
-  box-shadow: 0 8px 30px rgba(124, 58, 237, 0.4), inset -2px 0 8px rgba(255,255,255,0.1);
-  transform: rotate(-4deg);
-  z-index: 2;
-}
-.book-spine {
-  position: absolute;
-  left: 4px;
-  width: 6px;
-  height: 56px;
-  background: linear-gradient(180deg, #8b5cf6, #4c1d95);
-  border-radius: 3px 0 0 3px;
-  transform: rotate(-4deg);
-  z-index: 3;
-  box-shadow: inset -2px 0 6px rgba(0,0,0,0.2);
-}
-.book-page {
-  position: absolute;
-  right: -4px;
-  width: 8px;
-  height: 52px;
-  background: linear-gradient(90deg, rgba(255,255,255,0.05), rgba(255,255,255,0.15));
-  border-radius: 0 3px 3px 0;
-  transform: rotate(-4deg) translateY(2px);
-  z-index: 1;
-  box-shadow: inset -1px 0 4px rgba(255,255,255,0.05);
-}
-.book-glow {
-  position: absolute;
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(124,58,237,0.25), transparent 70%);
-  filter: blur(16px);
-  z-index: 0;
-  animation: glowPulse 3s ease-in-out infinite alternate;
-}
-@keyframes glowPulse {
-  0% { opacity: 0.6; transform: scale(0.9); }
-  100% { opacity: 1; transform: scale(1.2); }
-}
-.book-icon {
-  animation: floatBook 4s ease-in-out infinite;
-}
-@keyframes floatBook {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
+@media (max-width: 480px) {
+  .register-card {
+    width: 100%;
+    padding: 28px 24px 20px;
+  }
+  .register-main { padding: 20px 16px; }
 }
 </style>

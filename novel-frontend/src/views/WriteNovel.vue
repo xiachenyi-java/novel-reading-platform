@@ -68,11 +68,11 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
-import { createNovel, uploadCover } from '../api/novel'
+import { createNovel } from '../api/novel'
 
 const router = useRouter()
 const formRef = ref(null)
@@ -81,7 +81,7 @@ const form = reactive({
   title: '',
   summary: '',
   category: '',
-  coverUrl: ''   // 上传成功后存储图片URL
+  coverUrl: ''
 })
 
 const rules = {
@@ -91,12 +91,13 @@ const rules = {
 
 const submitting = ref(false)
 
-// 上传接口地址（直接使用后端 /upload，会经过代理）
+// 上传接口地址
 const uploadAction = '/api/upload'
-// 上传时携带 Token
-const uploadHeaders = {
-  Authorization: `Bearer ${localStorage.getItem('token')}`
-}
+
+// ★ 改了：改成 computed，token 变化时能实时反映，不会带旧 token
+const uploadHeaders = computed(() => ({
+  Authorization: `Bearer ${localStorage.getItem('token') || ''}`
+}))
 
 // 上传前校验
 const beforeUpload = (file) => {
@@ -114,10 +115,9 @@ const beforeUpload = (file) => {
 }
 
 // 上传成功
-const handleUploadSuccess = (response, file) => {
-  // 注意：后端返回 Result<String>，实际数据在 response.data 中
+const handleUploadSuccess = (response) => {
   if (response.code === 200) {
-    form.coverUrl = response.data   // 图片URL
+    form.coverUrl = response.data
     ElMessage.success('封面上传成功')
   } else {
     ElMessage.error(response.msg || '上传失败')
@@ -138,7 +138,6 @@ const submitForm = async () => {
 
     submitting.value = true
     try {
-      // 构造请求体（根据后端 NovleDTO 字段调整）
       const payload = {
         title: form.title,
         summary: form.summary,
@@ -148,7 +147,6 @@ const submitForm = async () => {
       const res = await createNovel(payload)
       if (res.data.code === 200) {
         ElMessage.success('小说发布成功！')
-        // 跳转到书城首页
         router.push('/')
       } else {
         ElMessage.error(res.data.msg || '发布失败')

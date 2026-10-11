@@ -54,22 +54,22 @@
 
           <div
             v-for="(item, index) in rankingList"
-            :key="item.NovelId || index"
+            :key="item.id || index"
             class="rank-item"
-            @click="goDetail(item.NovelId)"
+            @click="goDetail(item.id)"
           >
             <span class="rank-no" :class="getRankClass(index)">
               {{ index + 1 }}
             </span>
             <div class="rank-cover-col">
-              <img v-if="item.CoverUrl" :src="item.CoverUrl" alt="封面" />
+              <img v-if="item.coverUrl" :src="item.coverUrl" alt="封面" />
               <span v-else>📖</span>
             </div>
             <div class="rank-title-col">
-              <span class="rank-title">{{ item.Title }}</span>
+              <span class="rank-title">{{ item.title }}</span>
             </div>
             <span class="rank-heat-col">
-              <span class="heat-number">{{ (item.Heat || 0).toLocaleString() }}</span>
+              <span class="heat-number">{{ (item.heat || 0).toLocaleString() }}</span>
             </span>
           </div>
 
@@ -85,12 +85,12 @@
             <div class="sidebar-card-title">🔥 热门推荐</div>
             <div
               v-for="(item, index) in hotRecommends"
-              :key="index"
+              :key="item.id || index"
               class="sidebar-card-item"
-              @click="goDetail(item.NovelId)"
+              @click="goDetail(item.id)"
             >
               <span class="sidebar-rank">{{ index + 1 }}</span>
-              <span class="sidebar-title-text">{{ item.Title }}</span>
+              <span class="sidebar-title-text">{{ item.title }}</span>
             </div>
           </div>
           <div class="sidebar-card" style="margin-top:16px;">
@@ -145,6 +145,17 @@ const hotRecommends = computed(() => {
   return rankingList.value.slice(0, 5)
 })
 
+// ===== ★ 兼容不同字段命名：camelCase 优先，PascalCase 兜底 =====
+const normalizeItem = (raw) => {
+  if (!raw) return null
+  return {
+    id: raw.id ?? raw.NovelId ?? raw.novelId ?? null,
+    title: raw.title ?? raw.Title ?? '',
+    coverUrl: raw.coverUrl ?? raw.CoverUrl ?? raw.coverUr1 ?? '',
+    heat: raw.heat ?? raw.Heat ?? 0,
+  }
+}
+
 // ===== 切换榜单 =====
 const switchTab = (tab) => {
   if (currentTab.value === tab) return
@@ -156,9 +167,11 @@ const switchTab = (tab) => {
 const loadRanking = async () => {
   loading.value = true
   try {
+    // ★ 改了：把 currentTab 作为第二个参数传给接口
     const res = await getRanking(20, currentTab.value)
     const data = res.data.data || res.data
-    rankingList.value = data || []
+    const list = Array.isArray(data) ? data : []
+    rankingList.value = list.map(normalizeItem).filter(Boolean)
     console.log(`${currentTab.value === 'total' ? '总榜' : '日榜'}数据:`, rankingList.value)
   } catch (error) {
     console.error('加载排行榜失败:', error)

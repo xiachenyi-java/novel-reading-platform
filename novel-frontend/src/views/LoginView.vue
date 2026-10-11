@@ -1,94 +1,181 @@
 <template>
-  <div class="login-wrapper">
-    <div class="particles" ref="particlesContainer"></div>
-    <div class="glow glow-1"></div>
-    <div class="glow glow-2"></div>
-
-    <div class="login-card">
-      <div class="card-header">
-        <div class="book-icon">
-          <div class="book-cover"></div>
-          <div class="book-spine"></div>
-          <div class="book-page"></div>
-          <div class="book-glow"></div>
+  <div class="login-page">
+    <!-- ===== 顶部品牌栏 ===== -->
+    <header class="login-header">
+      <div class="header-inner">
+        <div class="brand" @click="$router.push('/')">
+          <span class="brand-icon">📚</span>
+          <span class="brand-name">夏辰义的书城</span>
         </div>
-        <h1>夏辰义的书城</h1>
-        <p>写故事的人，终将被故事铭记</p>
+        <div class="header-right">
+          <span class="tip">还没有账号？</span>
+          <a class="link" @click.prevent="$router.push('/register')">免费注册</a>
+        </div>
       </div>
+    </header>
 
-      <el-form @keyup.enter="handleLogin" class="login-form">
-        <el-form-item>
-          <el-input
-            v-model="username"
-            placeholder="用户名"
-            prefix-icon="User"
-            size="large"
-            class="custom-input"
-          />
-        </el-form-item>
-
-        <el-form-item>
-          <el-input
-            v-model="password"
-            type="password"
-            placeholder="密码"
-            prefix-icon="Lock"
-            size="large"
-            show-password
-            class="custom-input"
-          />
-        </el-form-item>
-
-        <el-form-item>
-          <el-button
-            type="primary"
-            size="large"
-            :loading="loading"
-            @click="handleLogin"
-            class="login-btn"
-          >
-            {{ loading ? '登录中...' : '立即体验' }}
-          </el-button>
-        </el-form-item>
-
-        <!-- ====== 游客入口 ====== -->
-        <div class="guest-entry">
-          <el-button
-            type="text"
-            size="small"
-            @click="goGuest"
-            class="guest-btn"
-          >
-            🚶 以游客身份浏览
-          </el-button>
+    <!-- ===== 主体 ===== -->
+    <main class="login-main">
+      <div class="main-inner">
+        <!-- 左：插画 + 标语 -->
+        <div class="illustration">
+          <div class="scene">
+            <div class="cloud cloud-1"></div>
+            <div class="cloud cloud-2"></div>
+            <div class="cloud cloud-3"></div>
+            <div class="book">
+              <div class="book-cover"></div>
+              <div class="book-page"></div>
+              <div class="book-spine"></div>
+            </div>
+            <div class="figure">📖</div>
+          </div>
+          <h2 class="slogan">阅读，让生活更美好！</h2>
+          <p class="sub-slogan">发现好书 · 分享书单 · 记录你的阅读时光</p>
         </div>
 
-        <div class="card-footer">
-          <span>还没有账号？</span>
-          <a href="#" @click.prevent="$router.push('/register')">立即注册</a>
+        <!-- 右：登录卡片 -->
+        <div class="login-card">
+          <!-- Tab 切换 -->
+          <div class="tabs">
+            <div
+              class="tab"
+              :class="{ active: activeTab === 'account' }"
+              @click="activeTab = 'account'"
+            >
+              账号登录
+            </div>
+            <div
+              class="tab"
+              :class="{ active: activeTab === 'phone' }"
+              @click="activeTab = 'phone'"
+            >
+              手机登录
+            </div>
+          </div>
+
+          <!-- 账号登录 -->
+          <el-form
+            v-if="activeTab === 'account'"
+            @keyup.enter="handleLogin"
+            class="login-form"
+          >
+            <el-form-item>
+              <el-input
+                v-model="username"
+                placeholder="手机 / 邮箱 / 用户名"
+                size="large"
+                class="custom-input"
+              >
+                <template #prefix>
+                  <el-icon><User /></el-icon>
+                </template>
+              </el-input>
+            </el-form-item>
+
+            <el-form-item>
+              <el-input
+                v-model="password"
+                type="password"
+                placeholder="密码"
+                size="large"
+                show-password
+                class="custom-input"
+              >
+                <template #prefix>
+                  <el-icon><Lock /></el-icon>
+                </template>
+              </el-input>
+            </el-form-item>
+
+            <div class="form-row">
+              <el-checkbox v-model="remember" class="remember">自动登录</el-checkbox>
+              <a class="link forget" @click.prevent="handleForget">忘记密码？</a>
+            </div>
+
+            <el-button
+              type="primary"
+              size="large"
+              :loading="loading"
+              @click="handleLogin"
+              class="submit-btn"
+            >
+              {{ loading ? '登录中...' : '登 录' }}
+            </el-button>
+
+            <div class="form-footer">
+              <span>还没有账号？</span>
+              <a class="link" @click.prevent="$router.push('/register')">免费注册</a>
+            </div>
+
+            <div class="agreement">
+              <el-checkbox v-model="agreed" size="small">
+                登录即代表同意
+                <router-link
+                  class="link"
+                  to="/terms"
+                  target="_blank"
+                  @click.stop
+                >《用户服务协议》</router-link>
+                和
+                <router-link
+                  class="link"
+                  to="/privacy"
+                  target="_blank"
+                  @click.stop
+                >《隐私政策》</router-link>
+              </el-checkbox>
+            </div>
+          </el-form>
+
+          <!-- 手机登录（占位，后端未实现） -->
+          <div v-else class="phone-placeholder">
+            <div class="placeholder-icon">📱</div>
+            <p>手机验证码登录功能开发中</p>
+            <el-button type="text" @click="activeTab = 'account'">返回账号登录</el-button>
+          </div>
+
+          <!-- 游客入口 -->
+          <div class="guest-entry">
+            <el-button type="text" size="small" @click="goGuest" class="guest-btn">
+              🚶 以游客身份浏览
+            </el-button>
+          </div>
         </div>
-      </el-form>
-    </div>
+      </div>
+    </main>
+
+    <!-- ===== 底部 Footer（已抽成组件）===== -->
+    <SiteFooter />
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { useRouter } from 'vue-router'
+import { User, Lock } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
 import { login } from '../api/user'
+import SiteFooter from '../components/SiteFooter.vue'
 
+const route = useRoute()
 const router = useRouter()
+
 const username = ref('')
 const password = ref('')
+const remember = ref(true)
+const agreed = ref(false)
 const loading = ref(false)
-const particlesContainer = ref(null)
-let animationId = null
+const activeTab = ref('account')
 
-// ========== 登录方法 ==========
+// ========== 登录 ==========
 const handleLogin = async () => {
   if (!username.value || !password.value) {
     ElMessage.warning('请输入用户名和密码')
+    return
+  }
+  if (!agreed.value) {
+    ElMessage.warning('请先阅读并同意用户服务协议')
     return
   }
 
@@ -97,22 +184,15 @@ const handleLogin = async () => {
     const res = await login(username.value, password.value)
     const body = res.data
 
-    // ① 打印一下方便排查后端到底返回了什么
-    console.log('登录接口返回:', body)
-
-    // ② 业务码判断
     if (body.code !== 200) {
       ElMessage.error(body.msg || `登录失败（code: ${body.code}）`)
       return
     }
-
-    // ③ data 判空
     if (!body.data) {
-      ElMessage.error('登录返回数据为空，请检查后端接口')
+      ElMessage.error('登录返回数据为空')
       return
     }
 
-    // ④ 安全解构，兼容不同字段名
     const token = body.data.token || body.data.accessToken
     const refreshToken = body.data.refreshToken || ''
     const userInfo = body.data.userInfo || body.data.user || {}
@@ -128,7 +208,10 @@ const handleLogin = async () => {
     localStorage.setItem('role', userInfo.role || 'USER')
 
     ElMessage.success(`欢迎回来，${userInfo.username || username.value}！`)
-    router.push('/')
+
+    // 跳回来源页（守卫塞的 redirect），没有就跳首页
+    const redirect = route.query.redirect || '/'
+    router.push(redirect)
   } catch (error) {
     console.error('登录失败:', error)
     const msg =
@@ -142,7 +225,12 @@ const handleLogin = async () => {
   }
 }
 
-// ========== 游客模式 ==========
+// ========== 忘记密码 ==========
+const handleForget = () => {
+  ElMessage.info('请联系管理员重置密码')
+}
+
+// ========== 游客 ==========
 const goGuest = () => {
   localStorage.removeItem('token')
   localStorage.removeItem('refreshToken')
@@ -151,318 +239,350 @@ const goGuest = () => {
   router.push('/')
 }
 
-// ========== 粒子背景 ==========
+// ========== 已登录直接跳 ==========
 onMounted(() => {
-  // 已登录跳转首页
   const token = localStorage.getItem('token')
   if (token) {
-    router.push('/')
-    return
-  }
-
-  const container = particlesContainer.value
-  if (!container) return
-
-  const canvas = document.createElement('canvas')
-  container.appendChild(canvas)
-  const ctx = canvas.getContext('2d')
-
-  const resize = () => {
-    canvas.width = container.clientWidth
-    canvas.height = container.clientHeight
-  }
-  resize()
-  window.addEventListener('resize', resize)
-
-  const particles = []
-  const count = 120
-  for (let i = 0; i < count; i++) {
-    particles.push({
-      x: Math.random() * canvas.width,
-      y: Math.random() * canvas.height,
-      radius: Math.random() * 2 + 1,
-      dx: (Math.random() - 0.5) * 0.5,
-      dy: (Math.random() - 0.5) * 0.5,
-    })
-  }
-
-  function animate() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    for (const p of particles) {
-      p.x += p.dx
-      p.y += p.dy
-      if (p.x < 0 || p.x > canvas.width) p.dx *= -1
-      if (p.y < 0 || p.y > canvas.height) p.dy *= -1
-      ctx.beginPath()
-      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2)
-      ctx.fillStyle = 'rgba(255,255,255,0.6)'
-      ctx.fill()
-    }
-    for (let i = 0; i < particles.length; i++) {
-      for (let j = i + 1; j < particles.length; j++) {
-        const dx = particles[i].x - particles[j].x
-        const dy = particles[i].y - particles[j].y
-        const dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist < 120) {
-          ctx.beginPath()
-          ctx.moveTo(particles[i].x, particles[i].y)
-          ctx.lineTo(particles[j].x, particles[j].y)
-          ctx.strokeStyle = `rgba(255,255,255,${0.15 * (1 - dist / 120)})`
-          ctx.lineWidth = 0.5
-          ctx.stroke()
-        }
-      }
-    }
-    animationId = requestAnimationFrame(animate)
-  }
-  animate()
-})
-
-onUnmounted(() => {
-  if (animationId) {
-    cancelAnimationFrame(animationId)
+    const redirect = route.query.redirect || '/'
+    router.push(redirect)
   }
 })
 </script>
 
 <style scoped>
-.login-wrapper {
-  position: relative;
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
-  background: linear-gradient(135deg, #0c0e1a 0%, #1a1040 40%, #2d1b69 100%);
+* { box-sizing: border-box; }
+
+.login-page {
+  min-height: 100vh;
+  background: #f7f8fa;
   display: flex;
-  justify-content: center;
-  align-items: center;
-  font-family: 'Segoe UI', sans-serif;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
-.particles {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
+/* ===== 顶部品牌栏 ===== */
+.login-header {
+  background: #fff;
+  border-bottom: 1px solid #f0f0f0;
+  height: 60px;
+  flex-shrink: 0;
+}
+.header-inner {
+  max-width: 1200px;
   height: 100%;
-  pointer-events: none;
-  z-index: 0;
+  margin: 0 auto;
+  padding: 0 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
-
-.glow {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.3;
-  pointer-events: none;
-  z-index: 0;
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
 }
-.glow-1 {
-  width: 400px;
-  height: 400px;
-  background: #7c3aed;
-  top: -100px;
-  right: -100px;
-  animation: floatGlow 8s ease-in-out infinite alternate;
-}
-.glow-2 {
-  width: 350px;
-  height: 350px;
-  background: #06b6d4;
-  bottom: -80px;
-  left: -80px;
-  animation: floatGlow 10s ease-in-out infinite alternate-reverse;
-}
-
-@keyframes floatGlow {
-  0% { transform: translate(0, 0) scale(1); }
-  100% { transform: translate(40px, 40px) scale(1.2); }
-}
-
-.login-card {
-  position: relative;
-  z-index: 1;
-  width: 420px;
-  padding: 48px 40px 36px;
-  background: rgba(255, 255, 255, 0.07);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border-radius: 32px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 40px 80px rgba(0, 0, 0, 0.6);
-  animation: cardEntry 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  opacity: 0;
-  transform: translateY(30px);
-}
-
-@keyframes cardEntry {
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.card-header {
-  text-align: center;
-  margin-bottom: 32px;
-}
-
-.card-header h1 {
-  font-size: 28px;
+.brand-icon { font-size: 24px; }
+.brand-name {
+  font-size: 20px;
   font-weight: 700;
-  color: #ffffff;
-  letter-spacing: 2px;
-  margin: 0 0 6px 0;
-  background: linear-gradient(135deg, #e0d7ff, #a78bfa);
+  background: linear-gradient(135deg, #7c3aed, #4f46e5);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
-.card-header p {
-  color: rgba(255, 255, 255, 0.5);
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 14px;
-  letter-spacing: 2px;
-  margin: 0;
+}
+.header-right .tip { color: #999; }
+.link {
+  color: #7c3aed;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+.link:hover { color: #4f46e5; }
+
+/* ===== 主体 ===== */
+.login-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+}
+.main-inner {
+  width: 100%;
+  max-width: 1080px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 60px;
 }
 
-.login-form {
-  margin-top: 8px;
+/* ===== 左侧插画 ===== */
+.illustration {
+  flex: 1;
+  text-align: center;
+  padding: 20px;
+}
+.scene {
+  position: relative;
+  height: 320px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cloud {
+  position: absolute;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #e0e7ff, #c7d2fe);
+  filter: blur(1px);
+  opacity: 0.85;
+}
+.cloud-1 { width: 180px; height: 90px; left: 10%; top: 20%; }
+.cloud-2 { width: 220px; height: 110px; right: 5%; top: 55%; }
+.cloud-3 { width: 140px; height: 70px; left: 20%; bottom: 8%; }
+
+.book {
+  position: relative;
+  width: 140px;
+  height: 170px;
+  z-index: 2;
+  animation: floatBook 4s ease-in-out infinite;
+}
+.book-cover {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(145deg, #a78bfa, #6d28d9);
+  border-radius: 8px 14px 14px 8px;
+  box-shadow: 0 20px 40px rgba(124, 58, 237, 0.35), inset -3px 0 12px rgba(255,255,255,0.15);
+  transform: rotate(-6deg);
+}
+.book-page {
+  position: absolute;
+  right: -8px;
+  top: 6px;
+  bottom: 6px;
+  width: 14px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.1), rgba(255,255,255,0.4));
+  border-radius: 0 6px 6px 0;
+  transform: rotate(-6deg);
+}
+.book-spine {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  bottom: 6px;
+  width: 10px;
+  background: linear-gradient(180deg, #8b5cf6, #4c1d95);
+  border-radius: 4px;
+  transform: rotate(-6deg);
+  box-shadow: inset -2px 0 8px rgba(0,0,0,0.2);
+}
+.figure {
+  position: absolute;
+  right: 20%;
+  top: 18%;
+  font-size: 56px;
+  z-index: 3;
+  animation: floatFigure 4.5s ease-in-out infinite;
+}
+@keyframes floatBook {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+@keyframes floatFigure {
+  0%, 100% { transform: translateY(0) rotate(-4deg); }
+  50% { transform: translateY(-10px) rotate(4deg); }
+}
+
+.slogan {
+  font-size: 26px;
+  font-weight: 700;
+  color: #4c1d95;
+  letter-spacing: 2px;
+  margin: 30px 0 10px;
+}
+.sub-slogan {
+  font-size: 14px;
+  color: #888;
+  letter-spacing: 1px;
+}
+
+/* ===== 右侧登录卡 ===== */
+.login-card {
+  flex-shrink: 0;
+  width: 400px;
+  background: #fff;
+  border-radius: 12px;
+  padding: 36px 40px 28px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
+  border: 1px solid #f0f0f0;
+}
+
+/* Tab */
+.tabs {
+  display: flex;
+  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 28px;
+}
+.tab {
+  flex: 1;
+  text-align: center;
+  padding: 12px 0;
+  font-size: 16px;
+  color: #666;
+  cursor: pointer;
+  position: relative;
+  transition: color 0.2s;
+}
+.tab:hover { color: #7c3aed; }
+.tab.active {
+  color: #1a1a2e;
+  font-weight: 600;
+}
+.tab.active::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -1px;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 3px;
+  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  border-radius: 2px;
+}
+
+/* 输入框 */
+.login-form :deep(.el-form-item) {
+  margin-bottom: 18px;
 }
 .custom-input :deep(.el-input__wrapper) {
-  background: rgba(255, 255, 255, 0.06) !important;
-  border: 1px solid rgba(255, 255, 255, 0.08) !important;
-  border-radius: 14px !important;
-  box-shadow: none !important;
-  transition: all 0.3s ease;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px #e5e7eb inset;
+  padding: 4px 12px;
+  transition: all 0.2s;
 }
 .custom-input :deep(.el-input__wrapper:hover) {
-  border-color: rgba(255, 255, 255, 0.2) !important;
+  box-shadow: 0 0 0 1px #c4b5fd inset;
 }
 .custom-input :deep(.el-input__wrapper.is-focus) {
-  border-color: #8b5cf6 !important;
-  box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.15) !important;
-}
-.custom-input :deep(.el-input__inner) {
-  color: #fff !important;
-  font-size: 15px;
+  box-shadow: 0 0 0 1px #7c3aed inset, 0 0 0 3px rgba(124, 58, 237, 0.1);
 }
 .custom-input :deep(.el-input__prefix) {
-  color: rgba(255, 255, 255, 0.3) !important;
+  color: #9ca3af;
 }
-.custom-input :deep(.el-input__suffix) {
-  color: rgba(255, 255, 255, 0.3) !important;
+.custom-input :deep(.el-input__inner) {
+  height: 40px;
+  font-size: 14px;
 }
 
-.login-btn {
+/* 记住我 + 忘记密码 */
+.form-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  font-size: 13px;
+}
+.remember :deep(.el-checkbox__label) {
+  font-size: 13px;
+  color: #666;
+}
+.forget { font-size: 13px; }
+
+/* 提交按钮 */
+.submit-btn {
   width: 100%;
-  height: 50px;
-  border-radius: 14px !important;
+  height: 48px;
+  border-radius: 8px !important;
   background: linear-gradient(135deg, #7c3aed, #4f46e5) !important;
   border: none !important;
   font-size: 16px;
   font-weight: 600;
-  letter-spacing: 1px;
-  transition: all 0.3s ease !important;
-  box-shadow: 0 8px 24px rgba(79, 70, 229, 0.35) !important;
-  margin-top: 4px;
+  letter-spacing: 4px;
+  box-shadow: 0 6px 20px rgba(79, 70, 229, 0.3) !important;
+  transition: all 0.2s !important;
 }
-.login-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 32px rgba(79, 70, 229, 0.5) !important;
+.submit-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(79, 70, 229, 0.4) !important;
 }
-.login-btn:active {
-  transform: scale(0.97);
+.submit-btn:active {
+  transform: translateY(0);
 }
 
+/* 底部 */
+.form-footer {
+  text-align: center;
+  margin-top: 20px;
+  font-size: 14px;
+  color: #999;
+}
+.form-footer .link {
+  margin-left: 6px;
+  font-weight: 500;
+}
+
+/* 协议 */
+.agreement {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #f5f5f5;
+}
+.agreement :deep(.el-checkbox__label) {
+  font-size: 12px;
+  color: #999;
+}
+.agreement .link {
+  font-size: 12px;
+}
+
+/* 手机登录占位 */
+.phone-placeholder {
+  text-align: center;
+  padding: 40px 0;
+  color: #999;
+}
+.placeholder-icon {
+  font-size: 56px;
+  opacity: 0.6;
+  margin-bottom: 16px;
+}
+.phone-placeholder p {
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+/* 游客入口 */
 .guest-entry {
   text-align: center;
-  margin-top: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
 }
 .guest-btn {
-  color: rgba(255, 255, 255, 0.4) !important;
-  font-size: 14px;
-  transition: color 0.3s;
+  color: #999 !important;
+  font-size: 13px;
 }
 .guest-btn:hover {
-  color: rgba(255, 255, 255, 0.7) !important;
+  color: #7c3aed !important;
 }
 
-.card-footer {
-  text-align: center;
-  margin-top: 12px;
-  color: rgba(255, 255, 255, 0.35);
-  font-size: 14px;
+/* ===== 响应式 ===== */
+@media (max-width: 900px) {
+  .illustration { display: none; }
+  .main-inner { justify-content: center; gap: 0; }
 }
-.card-footer a {
-  color: #a78bfa;
-  text-decoration: none;
-  font-weight: 500;
-  margin-left: 6px;
-  transition: color 0.2s;
-}
-.card-footer a:hover {
-  color: #c4b5fd;
-}
-
-.book-icon {
-  position: relative;
-  width: 64px;
-  height: 64px;
-  margin: 0 auto 12px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-.book-cover {
-  position: absolute;
-  width: 48px;
-  height: 56px;
-  background: linear-gradient(145deg, #a78bfa, #6d28d9);
-  border-radius: 4px 8px 8px 4px;
-  box-shadow: 0 8px 30px rgba(124, 58, 237, 0.4), inset -2px 0 8px rgba(255,255,255,0.1);
-  transform: rotate(-4deg);
-  z-index: 2;
-}
-.book-spine {
-  position: absolute;
-  left: 4px;
-  width: 6px;
-  height: 56px;
-  background: linear-gradient(180deg, #8b5cf6, #4c1d95);
-  border-radius: 3px 0 0 3px;
-  transform: rotate(-4deg);
-  z-index: 3;
-  box-shadow: inset -2px 0 6px rgba(0,0,0,0.2);
-}
-.book-page {
-  position: absolute;
-  right: -4px;
-  width: 8px;
-  height: 52px;
-  background: linear-gradient(90deg, rgba(255,255,255,0.05), rgba(255,255,255,0.15));
-  border-radius: 0 3px 3px 0;
-  transform: rotate(-4deg) translateY(2px);
-  z-index: 1;
-  box-shadow: inset -1px 0 4px rgba(255,255,255,0.05);
-}
-.book-glow {
-  position: absolute;
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(124,58,237,0.25), transparent 70%);
-  filter: blur(16px);
-  z-index: 0;
-  animation: glowPulse 3s ease-in-out infinite alternate;
-}
-@keyframes glowPulse {
-  0% { opacity: 0.6; transform: scale(0.9); }
-  100% { opacity: 1; transform: scale(1.2); }
-}
-.book-icon {
-  animation: floatBook 4s ease-in-out infinite;
-}
-@keyframes floatBook {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
+@media (max-width: 480px) {
+  .login-card {
+    width: 100%;
+    padding: 28px 24px 20px;
+  }
+  .login-main { padding: 20px 16px; }
 }
 </style>
