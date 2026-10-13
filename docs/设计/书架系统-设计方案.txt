@@ -1,0 +1,1132 @@
+================================================================================
+                    书架系统 · 设计方案 v2（修订稿）
+                            小说管理系统
+                        最后更新：2026-10-07
+                  状态：硬伤已修，8 个拍板点待确认
+================================================================================
+
+【★★ 进度看这里 —— 这份文档只讲"打算怎么做"】
+  做到哪了、踩了什么坑 → docs/项目笔记/14-书架系统.txt
+  截至 2026-10-10：
+    步骤 1 ✅ / 步骤 2 ✅ / 步骤 3 ✅ **5 个接口全部完成**
+    步骤 4 ✅ / 步骤 5 ✅ **阅读进度闭环（Redis 暂存 + 定时刷回 DB）已完成**
+  ✅ 设计里的三个定时任务要点全部落实：
+    fixedDelay（非 fixedRate）/ SCAN（非 KEYS）/ last_read_time 幂等版本号
+    ⇒ 尤其是"版本号不能用 update_time"那条，实现与设计一致
+  ⚠ 本文件 3.4 没覆盖的边界：remove() 清了 DB 进度字段，
+    但没删 Redis 的 progress key → 复活后旧进度被刷回（问题清单 问题 24）
+  ✅ 设计已被正确落实的两处（曾一度不一致，已修）：
+    · 路径：代码已改回单数 /bookshelf，与本文件一致
+    · 唯一约束：uk_bookshelf_user_novel 已补进库
+  ⚠ 但 3.3 置顶那节有个本文件**没覆盖**的边界：
+    软删掉的记录还能被置顶（见问题清单 问题 23）——
+    归属校验只带了 userId，没带 deleted=0
+  ⚠ 部署前必看：docker/mysql/init/01-schema.sql 编码坏了（问题 20）
+  ★ 本文件的正文保持"设计原样"不动 —— 它是意图记录，不是现状快照。
+    现状一律以项目笔记/14 为准。
+
+【这份文档是什么】
+  书架系统的完整设计。v2 是基于 v1 草案，**逐条对照真实代码核对后**的修订版。
+
+【v1 → v2 改了什么】（速览）
+  ------------------------------------------------------------------
+  编号  问题                              严重度   v2 处理
+  ------------------------------------------------------------------
+  ①     文件清单漏了 01-schema.sql         🔴 必炸   已补（1.3 节 + 第九节）
+  ②     readChapter 是游客接口，userId 可能为 null
+                                           🔴 必炸   已补（3.5 节判空）
+  ③     last_read_chapter_number 冗余评估错误
+                                           🔴 会脏   去掉冗余（1.1 节）
+  ④     DELETE /bookshelf/batch 带 Body   🟠 换环境挂  改 POST（3.4 节）
+  ⑤     3 个索引没有一个能用于排序         🟠 设计错  改成 2 个带前缀（1.1 节）
+  ⑥     TTL 理由与"刷完不删"自相矛盾       🟠 白写2000次  改"刷完用 last_read_time 挡"（七节）
+  ⑦     fixedRate 会任务重叠               🟠 隐患   改 fixedDelay（七节）
+  ⑧-⑯  10 处缺口                          🟡 缺失   已补（各节）
+  ------------------------------------------------------------------
+
+【v2 新增的章节】
+  · 1.3 建表落地：三个地方都要改（★ 最重要的一节）
+  · 十三、验证清单（期望值 → 判据 → 故障演练）
+
+【怎么用】
+  1. 先看"十、待拍板点"，把 8 条定下来
+  2. 再看"十二、实现顺序"，按 5 步走
+  3. 每步做完跑"十三、验证清单"里对应的判据
+
+【已确定的大方向】（前几轮讨论敲定，v2 保持不变）
+  · 一个用户对一本书只有一条书架记录（唯一索引）
+  · 记录：收藏时间 + 最后阅读进度 + 排序/置顶
+  · 必须分页
+  · 软删
+  · 进度更新用"Redis 暂存 + 定时刷回 DB"
+  · novel_update 排序用原生 SQL（全局排序）
+  · 重新加入书架复用旧记录（软删复活）
+
+【本轮明确不做】
+  · 缓存（书架列表缓存、进度缓存）—— 有性能数据再说
+  · 分布式锁（定时任务多实例冲突）—— 下一轮做 Redis 锁时一起
+  · 书籍分组/标签（在读/想读/读完）—— 需求里没有
+  · 多设备进度冲突合并 —— 已存时间戳，但不做冲突算法
+  · 前端书架页 —— 后端只提供接口
+
+
+################################################################################
+  一、数据模型
+################################################################################
+
+--------------------------------------------------------------------------------
+1.1 bookshelf 表
+--------------------------------------------------------------------------------
+
+  【★ v2 修订 1：去掉 last_read_chapter_number 冗余字段】
+  【★ v2 修订 2：索引从 3 个改成 2 个，且带上 is_top/top_time 前缀】
+
+  -- 这是 @Table(indexes = ...) 声明后 Hibernate 生成的等价 DDL
+  -- ★ prod 环境不认 @Table，必须同步写进 docker/mysql/init/01-schema.sql
+  CREATE TABLE `bookshelf` (
+    `id`                        int NOT NULL AUTO_INCREMENT,
+    `user_id`                   int NOT NULL,
+    `novel_id`                  int NOT NULL,
+
+    -- 阅读进度
+    `last_read_chapter_id`      int DEFAULT NULL,
+    `last_read_time`            datetime(6) DEFAULT NULL,
+
+    -- 置顶
+    `is_top`                    tinyint NOT NULL DEFAULT 0,
+    `top_time`                  datetime(6) DEFAULT NULL,
+
+    -- 审计
+    `create_time`               datetime(6) NOT NULL,
+    `update_time`               datetime(6) NOT NULL,
+    `deleted`                   tinyint NOT NULL DEFAULT 0,
+
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_bookshelf_user_novel` (`user_id`, `novel_id`),
+
+    -- ★ 排序索引：必须带上 is_top / top_time 前缀，否则排序仍会 filesort
+    KEY `idx_bookshelf_top_create`
+        (`user_id`, `deleted`, `is_top`, `top_time`, `create_time`),
+    KEY `idx_bookshelf_top_read`
+        (`user_id`, `deleted`, `is_top`, `top_time`, `last_read_time`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+  ------------------------------------------------------------------
+  字段                        说明
+  ------------------------------------------------------------------
+  last_read_chapter_id       最后读的章节 id，未读为 null
+  last_read_time             最后阅读时间，未读为 null
+  is_top                     0/1，是否置顶
+  top_time                   ★ 多个置顶时按"置顶先后"排
+  create_time                收藏时间（复活时重置，见拍板点 2）
+  update_time                @PreUpdate 自动维护，零同步成本
+  deleted                    软删标记
+  ------------------------------------------------------------------
+
+  【★★ v2 修订 1 的完整理由：为什么去掉 last_read_chapter_number】
+
+    v1 草案的原话：
+      "冗余的代价是'和 chapter 表可能不一致'，
+       但**章节号基本不变，风险低**。"
+
+    ★ 这个前提在本项目**不成立**。代码证据：
+
+      // NovelServiceIml.java:151-156   deleteChapter 的最后一段
+      // 重排章节号
+      List<Chapter> chapters =
+          chapterRepository.findByNovelIdOrderByChapterNumberAsc(novelId);
+      for (int i = 0; i < chapters.size(); i++) {
+          chapters.get(i).setChapterNumber(i + 1);   // ← 章节号会变！
+      }
+      chapterRepository.saveAll(chapters);
+
+    ⇒ 管理员删掉第 5 章 → 原来的 6 变成 5、7 变成 6 ……
+    ⇒ 用户读到第 8 章，书架显示"读到第 8 章"，删章后他读的
+       其实是现在的第 7 章 —— **显示错位**
+    ⇒ last_read_chapter_id 甚至可能指向**已被删除的章节**
+
+    ★ 这不是"风险低"，是**必然发生**。
+    ★ 而且它是 totalWords 那个病的第三次复发（决策 2）——
+      冗余字段要"多处同步维护"，但这个字段**没有任何地方负责同步**。
+
+    【替代方案】不存 number，列表里用 last_read_chapter_id 批量回查。
+      成本：**SQL 次数不变** —— 因为本来就要跑"批量查章节统计"那条
+      GROUP BY（见第八节）。扩成顺便带回章节号即可。
+
+    【顺带解决】last_read_chapter_id 指向已删章节的问题：
+      SQL 里用 LEFT JOIN chapter ON b.last_read_chapter_id = c.id，
+      查不到就显示"进度已失效"，前端提示"从第 1 章重新读"。
+
+  【★★ v2 修订 2 的完整理由：为什么索引要带 is_top/top_time 前缀】
+
+    三种排序都是这个形状：
+      ORDER BY is_top DESC, top_time DESC, <排序键> DESC, id DESC
+
+    v1 草案配的索引是 (user_id, deleted, last_read_time)。
+    ★ 对不上 —— MySQL 用索引避免排序的条件是：
+      **ORDER BY 的列顺序必须是索引列顺序的前缀**。
+      这里 ORDER BY 第一列是 is_top，而索引第三列才是 last_read_time，
+      中间隔着 is_top / top_time。
+    ⇒ MySQL 只能用它做 WHERE 过滤，**排序阶段仍然 filesort**。
+
+    修正后的索引：
+      idx_bookshelf_top_create (user_id, deleted, is_top, top_time, create_time)
+      idx_bookshelf_top_read   (user_id, deleted, is_top, top_time, last_read_time)
+      ↑ 等值列 user_id/deleted 后面的部分，正好是 ORDER BY 的前缀
+      ↑ InnoDB 会自动在末尾追加主键 id，所以 id DESC 也被覆盖
+
+    ★ novel_update 排序**必然 filesort**，躲不掉 ——
+      排序列 n.last_update_time 在另一张表里，任何 bookshelf 上的索引
+      都救不了。这不是设计缺陷，是跨表排序的物理限制。
+      ⇒ 面试可讲："我为什么接受这个 filesort"
+
+    ★ 为什么是 2 个而不是 3 个：
+      既然 novel_update 那个索引救不了排序，它就是纯负担
+      （INSERT 时多维护一棵 B+ 树）。
+
+    【★ 待实测】以上是**推理**，不是结论。
+      实现后用 EXPLAIN 验证：
+        EXPLAIN SELECT ... ORDER BY is_top DESC, top_time DESC,
+                last_read_time DESC, id DESC;
+        → Extra 列出现 "Using filesort" 就是没生效
+        → 出现 "Using index condition" / "Backward index scan" 才算生效
+      ★ 这一步别省 —— 推理错在 MySQL 优化器上是很常见的事。
+
+  【唯一索引不带 deleted —— v1 的这个判断是对的，保留】
+    复活逻辑走"UPDATE 旧记录"而不是 INSERT 新记录，所以不需要带。
+    带上反而会出问题：MySQL 里 NULL 不参与唯一性判断，
+    用 NULL 表示"未删除"会导致同一用户能收藏同一本书多次。
+
+--------------------------------------------------------------------------------
+1.2 novel 表加 author
+--------------------------------------------------------------------------------
+
+  ALTER TABLE `novel` ADD COLUMN `author` varchar(100) NOT NULL DEFAULT '佚名';
+
+  ★ v1 草案写了 "AFTER title 只为字段顺序好看" ——
+    实测 mysqldump 导出的列顺序是**字母序**，AFTER 不会保留。
+    ⇒ 删掉 AFTER，少一个误导。
+
+  ★ 为什么改字段而不是新建 author 表：
+    简单。如果将来要存作者简介、头像，再考虑拆表。
+
+  ★★ 用数据库默认值 DEFAULT '佚名' **救不了你**：
+    JPA 会**显式把 NULL 写进 INSERT 语句**，默认值只在"该列不出现在
+    INSERT 里"时生效。所以 Service 层必须自己兜底（见 1.2.1）。
+
+--------------------------------------------------------------------------------
+1.2.1 ★ 加了 author 之后，有 4 个地方必须跟着改
+--------------------------------------------------------------------------------
+
+  【1】NovelDTO 加字段
+        private String author;
+        ★ 不要加 @NotBlank —— 会让现有测试直接挂掉（见下方【3】）
+
+  【2】NovelServiceIml.addNovel 里兜底
+        novel.setAuthor(
+            dto.getAuthor() == null || dto.getAuthor().isBlank()
+                ? "佚名" : dto.getAuthor());
+
+  【3】NovelServiceIml.updateNovel 里也要 setAuthor
+        novel.setAuthor(dto.getAuthor());
+        ★ v1 草案的文件清单只写了 "NovelDTO +3"，漏了这两个方法
+
+  【4】★ 现有测试会挂 —— 这直接威胁判据 B
+        // NovelServiceTest.java:30-33
+        NovelDTO dto = new NovelDTO();
+        dto.setTitle("单元测试小说");
+        dto.setSummary("测试简介");
+        dto.setCategory("玄幻");
+        // ← 没有 setAuthor
+
+        若 addNovel 直接 setAuthor(dto.getAuthor()) 且列是 NOT NULL
+        → 插入失败 → 12 个测试里的 testAdd / testDelete 直接挂
+        ⇒ 所以 【2】的兜底不是"防御性编程"，是**必须的**
+
+  【★ 第五个地方：缓存】NovelDetailVO 加了 author 之后，
+    Redis 里存的是**旧版本的 JSON**，反序列化出来 author = null，
+    30 分钟 TTL 内前端看不到作者。
+    ⇒ 部署这次改动时，必须手动清 novel 缓存区（或等 30 分钟）
+    ★ 这是"改动引入回归"的又一例 —— 和 CacheErrorHandler 那次同源：
+      改了一个地方，没意识到另一个地方依赖它。
+
+--------------------------------------------------------------------------------
+1.3 ★★ 建表落地：三个地方都要改（v1 草案完全漏了这节）
+--------------------------------------------------------------------------------
+
+  【为什么必须单独讲这一节】
+    项目有两种运行模式，建表机制完全不同：
+
+    application-dev.properties:11    spring.jpa.hibernate.ddl-auto=update
+    application-prod.properties:8    spring.jpa.hibernate.ddl-auto=validate
+
+      dev  = update   → 实体加了 @Table(indexes=...)，表/索引会自动长出来
+      prod = validate → **只校验、绝不建表**
+
+  ⇒ 光在实体上声明索引，**prod 环境什么都不会发生**。
+
+  【要改的三个地方】
+
+    ┌─ ① 实体类（dev 用）─────────────────────────────────────┐
+    │  entity/Bookshelf.java                                  │
+    │    @Table(name = "bookshelf", indexes = {                │
+    │      @Index(name="idx_bookshelf_top_create",             │
+    │             columnList="userId,deleted,isTop,topTime,createTime"),
+    │      @Index(name="idx_bookshelf_top_read",               │
+    │             columnList="userId,deleted,isTop,topTime,lastReadTime")
+    │    })                                                    │
+    │  ★ columnList 写 **Java 属性名**，Hibernate 自动翻译成列名 │
+    │    （决策 6）                                            │
+    │  ★ 唯一索引用 @Table(uniqueConstraints = ...) 声明，       │
+    │    不要塞进 indexes 里                                    │
+    └──────────────────────────────────────────────────────────┘
+
+    ┌─ ② docker/mysql/init/01-schema.sql（prod 用）────────────┐
+    │  加两段：                                                  │
+    │    ① ALTER TABLE `novel` ADD COLUMN `author` ...          │
+    │    ② CREATE TABLE `bookshelf` (...)  含 2 个 KEY + 1 个 UK │
+    │                                                           │
+    │  ★★ 怎么改这个文件：不要手写！                             │
+    │     在 dev 库跑一次，让 Hibernate 建好表和索引，然后：       │
+    │       mysqldump -uroot -p****** --no-data --databases book_db \
+    │         > docker/mysql/init/01-schema.sql                 │
+    │  ★★ 导完必须验索引在不在：                                  │
+    │       SHOW INDEX FROM book_db.bookshelf;                  │
+    │     应看到 1 PRIMARY + 1 UNIQUE + 2 KEY                   │
+    │     ★ 漏了的话，prod 的表**没有索引**，"索引优化"在线上=0   │
+    └──────────────────────────────────────────────────────────┘
+
+    ┌─ ③ 本机已有的 Docker volume（★ 最容易漏）────────────────┐
+    │  init 脚本**只在数据目录为空时执行一次**。                  │
+    │  你现在跑着的 mysql 容器里已经装满数据了，                  │
+    │  改完脚本直接 up，脚本**根本不会跑**，你会得到一模一样的报错。│
+    │                                                           │
+    │  两条路：                                                  │
+    │    · 开发环境：docker compose down -v && docker compose up --build
+    │                （★ -v 会删掉所有数据，确认里面没有要留的）  │
+    │    · 有数据的库：手动执行那两段 SQL                          │
+    │        docker exec -i demo2-mysql mysql -uroot -p****** book_db \
+    │          < docker/mysql/init/01-schema.sql                │
+    │        ★ 但这个脚本含 DROP TABLE，会清空数据！              │
+    │          有数据的库必须**只挑那两段新增的 SQL** 手动执行      │
+    └──────────────────────────────────────────────────────────┘
+
+  【★★ 更深一层的认知（面试可讲）】
+    **@Table(indexes=...)（决策 6）在 prod 的 validate 模式下不产生任何 DDL。**
+    它在 dev 的 update 下会自动建索引，但 prod 只校验不创建 ——
+    索引必须由 schema.sql / 迁移脚本显式创建。
+    ⇒ "索引定义跟代码走"这句话**只在 dev 成立**。
+
+    ★ 这是 2026-10-07 问题 18 修复时发现的（见项目说明第十节）。
+      同一个坑，书架系统是第二次踩 —— 所以这次提前写进设计。
+
+  【📌 技术债登记】本机 dev 库的表是 update 模式"悄悄长出来的"，
+    只存在于硬盘上，没有任何脚本记录。
+    ⇒ 长期方案是引入 Flyway/Liquibase（第三梯队），
+      现在先靠"改完实体记得同步 schema.sql"这条人工纪律。
+    ★ 人工纪律必然会忘 —— 这就是为什么它值一个技术债条目。
+
+
+################################################################################
+  二、Redis 进度设计
+################################################################################
+
+  Key:   progress:{userId}:{novelId}
+  Type:  Hash
+  Fields:
+    chapterId     → "123"
+    chapterNumber → "5"                ← ★ 这里存 number 是安全的（见下）
+    updateTime    → "1730000000000"    (毫秒时间戳)
+  TTL:   7 天
+
+  【★ 为什么这里可以存 chapterNumber，1.1 却不行？】
+    Redis 的 progress 是**短期暂存**（7 天 TTL），刷回 DB 时只用它写
+    last_read_chapter_id；而 bookshelf 表的 last_read_chapter_number 是
+    **长期存储**，会跨越"管理员删章节"这个事件。
+    ⇒ 同样的字段，生命周期不同，结论就不同。
+    ★ 判断冗余能不能接受，看的是**它要活多久**，不是它叫什么。
+
+  【写入时机】
+    NovelServiceIml.readChapter 里，用户每读一章写一次。
+    ★★ 但 readChapter 是**游客接口** —— 见 3.5，必须判空！
+
+  【为什么不直接写 DB】
+    快速翻页会打 10+ 次 UPDATE，DB 写压力大。
+
+  【TTL 7 天的理由】
+    进度是"活数据"，用户 7 天不看书，进度回 DB 也是准的
+    （定时任务已经刷过了），Redis 里留着没意义。
+
+  ------------------------------------------------------------------
+  决策点        建议          备选
+  ------------------------------------------------------------------
+  数据结构      Hash          String 存 JSON（要序列化，且改字段麻烦）
+  TTL           7 天          30 天 / 永不过期
+  时间戳精度    毫秒          秒（★ 秒级精度下，同一秒内的两次
+                              "最后写的赢"判断会失效）
+  ------------------------------------------------------------------
+
+
+################################################################################
+  三、接口清单
+################################################################################
+
+  ------------------------------------------------------------------
+  #  方法   路径                      权限    说明
+  ------------------------------------------------------------------
+  1  POST   /bookshelf                登录    加入书架（复活逻辑）
+  2  GET    /bookshelf                登录    书架列表（分页+排序）
+  3  PUT    /bookshelf/{id}/top       登录    置顶/取消置顶
+  4  DELETE /bookshelf/{id}           登录    移出（软删）
+  5  POST   /bookshelf/batch-remove   登录    批量移出  ★ v2 改
+  ------------------------------------------------------------------
+
+  (改) readChapter - 内部写 Redis，不新增接口
+
+  ★ WebConfig 不用改 —— 书架接口默认走严格路径，登录才能访问。
+    【已核对代码】LoginInterceptor.java:48
+      boolean isGuestEndpoint =
+          "GET".equalsIgnoreCase(method) && path.startsWith("/novels");
+    ⇒ 只有 "GET + /novels 开头" 是游客路径，
+      /bookshelf 不在其中 ⇒ 严格路径 ⇒ 必须带 token ✓
+
+--------------------------------------------------------------------------------
+3.1 加入书架
+--------------------------------------------------------------------------------
+
+  POST /bookshelf
+  Body:   { "novelId": 123 }
+  返回:   Result<BookshelfItemVO>   ← 返回刚加入的条目，方便前端直接插入列表
+
+  【复活逻辑】
+    ① 校验 novel 存在                              ★ v2 新增
+         novelRepository.findById(novelId)
+             .orElseThrow(() -> new BusinessException("小说不存在"));
+       ★ 表间没有外键约束，不校验会产生指向不存在小说的脏记录
+    ② 查 (userId, novelId) 的记录
+    ③ 不存在          → INSERT
+    ④ 存在且 deleted=0 → 幂等返回（已收藏）
+    ⑤ 存在且 deleted=1 → UPDATE deleted=0, create_time=now() ★ 复用旧记录
+
+  ★ 第 ⑤ 步 create_time 是否重置 —— 见"十、待拍板点"第 2 条
+
+  【并发双击】
+    两个请求同时到、且记录不存在时，都会走 INSERT，
+    其中一个会撞 uk_bookshelf_user_novel 抛 DataIntegrityViolationException。
+    ⇒ MVP 可以接受（前端按钮置灰即可）；
+      要处理的话 catch 后重新查询返回即可。★ 记录在案，本轮不做
+
+--------------------------------------------------------------------------------
+3.2 书架列表
+--------------------------------------------------------------------------------
+
+  GET /bookshelf?page=1&size=20&sort=recent_read
+  返回: Result<Page<BookshelfItemVO>>   ← 与 NovelController.list 结构一致 ✓
+
+  ------------------------------------------------------------------
+  sort 值        ORDER BY（置顶优先）
+  ------------------------------------------------------------------
+  recent_read    is_top DESC, top_time DESC, last_read_time DESC, id DESC
+  recent_add     is_top DESC, top_time DESC, create_time DESC, id DESC
+  novel_update   is_top DESC, top_time DESC, n.last_update_time DESC, b.id DESC
+  ------------------------------------------------------------------
+
+  ★ id DESC 是兜底 —— 时间相同时保证分页稳定，不会出现翻页重复/漏掉。
+    这是分页的经典坑，v1 草案抓到了，保留。
+
+  ★ last_read_time 为 NULL 的记录默认排最后（MySQL NULL 最小，DESC 时最后）。
+    如果希望"没读过的书"排前面，要加 ISNULL(last_read_time) DESC。
+    —— 见"十、待拍板点"第 3 条
+
+  【★ v2 新增：sort 参数必须白名单校验】
+    ★★ 原生 SQL 的 ORDER BY **不能用占位符绑定**，只能拼字符串。
+       所以绝不能把用户输入直接拼进去 —— 这是 SQL 注入的经典入口。
+
+    正确做法：
+      private String resolveOrderBy(String sort) {
+          return switch (sort == null ? "" : sort) {
+              case "recent_add"    -> "b.is_top DESC, b.top_time DESC, "
+                                    + "b.create_time DESC, b.id DESC";
+              case "novel_update"  -> "b.is_top DESC, b.top_time DESC, "
+                                    + "n.last_update_time DESC, b.id DESC";
+              default              -> "b.is_top DESC, b.top_time DESC, "
+                                    + "b.last_read_time DESC, b.id DESC";
+          };
+      }
+      ⇒ 用户输入只用来**选分支**，从不进入 SQL 字符串
+      ⇒ 非法值落到 default，等价于 recent_read，不报错
+
+  【★ v2 新增：分页参数兜底】
+    照抄 NovelController.java:102-110 的既有模式：
+      if (page < 1)  page = 1;
+      if (size < 1)  size = 10;
+      if (size > 100) size = 100;
+    ★ 项目里列表接口已经吃过一次这个亏（原问题 21），别再吃第二次
+
+--------------------------------------------------------------------------------
+3.3 置顶
+--------------------------------------------------------------------------------
+
+  PUT /bookshelf/{id}/top
+  Body:   { "top": true }
+  返回:   Result<Void>
+
+  ★ 显式传值，不做 toggle。
+    理由：toggle 在前端重试时会出错（重试一次又变回去了）。✓ v1 判断正确
+
+  【★ v2 补充：取消置顶时必须把 top_time 清成 NULL】
+    top = true  → is_top = 1, top_time = now()
+    top = false → is_top = 0, top_time = null      ← v1 草案漏了
+    ★ 不清的话，下次重新置顶前 top_time 还留着旧值，
+      如果排序里 is_top 相同时按 top_time 排，会用到这个陈旧值
+
+  【★ v2 补充：归属校验】
+    必须是 findByIdAndUserId(id, userId)，不能是 findById(id)
+    ★ 否则 A 用户可以置顶 B 用户的记录 —— 越权。
+      这是项目里 deleteChapter 已经做过的模式（校验 chapter.novelId），照抄。
+
+--------------------------------------------------------------------------------
+3.4 移出
+--------------------------------------------------------------------------------
+
+  DELETE /bookshelf/{id}
+  POST   /bookshelf/batch-remove      Body: { "ids": [1,2,3] }
+  返回:  Result<Void>
+
+  【★ v2 修订：为什么 DELETE /bookshelf/batch 改成 POST】
+
+    ① **DELETE 请求体的语义在 RFC 里是未定义的**，
+       实践中有中间件会直接丢弃它（Nginx 默认转发，但某些网关/CDN
+       不保证）。本地能跑通，换个环境就 400。
+    ② **路由冲突**：DELETE /bookshelf/{id} 和 DELETE /bookshelf/batch
+       前缀重叠。现在能work是靠 Spring PathPattern 的"字面量优先于模板"
+       规则 —— 能跑 ≠ 设计对。而且 {id} 是 Integer，
+       一旦匹配错就是 MethodArgumentTypeMismatchException。
+    ③ "批量"是一个**动作**，不是一个资源 —— 本来就不该用 DELETE。
+
+  【★ v2 补充：ids 数量上限】
+    @NotEmpty + @Size(max = 100, message = "一次最多移出 100 本")
+    ★ 同 3.2 的分页兜底，属于"输入必须有界"
+
+  【★ 必须校验归属】
+    批量删的时候要按 (id, userId) 一起删，不能只按 id。
+    ★ 建议 SQL：DELETE 改成 UPDATE ...
+        WHERE id IN :ids AND user_id = :userId
+      这样一次 UPDATE 搞定，且天然免疫越权。
+
+
+################################################################################
+  四、DTO / VO
+################################################################################
+
+--------------------------------------------------------------------------------
+4.1 入参
+--------------------------------------------------------------------------------
+
+  // BookshelfAddDTO
+  @NotNull(message = "小说ID不能为空")
+  private Integer novelId;
+
+  // BookshelfTopDTO
+  @NotNull(message = "置顶状态不能为空")
+  private Boolean top;
+
+  // BookshelfBatchDeleteDTO
+  @NotEmpty(message = "请选择要移出的书")
+  @Size(max = 100, message = "一次最多移出 100 本")     // ★ v2 新增
+  private List<Integer> ids;
+
+  ★ 所有 DTO 记得加 @Data（Lombok）和类头注释（作者 + 日期）
+  ★★ Controller 参数上必须加 @Valid —— 漏了校验完全不生效（项目既有教训）
+
+--------------------------------------------------------------------------------
+4.2 出参 BookshelfItemVO
+--------------------------------------------------------------------------------
+
+  private Integer id;              // bookshelf.id
+  private Integer novelId;         // novel.id
+
+  // 书籍信息
+  private String  title;
+  private String  author;          // ★ 本次新增字段
+  private String  coverUrl;
+  private String  category;
+  private String  status;          // ONGOING / FINISHED
+
+  // 进度相关
+  private Integer lastReadChapterId;
+  private Integer lastReadChapterNumber;   // ★ 由批量 SQL 回查得到，不冗余存
+  private LocalDateTime lastReadTime;
+
+  // 最新章节（书架列表要显示"更新到第 N 章"）
+  private Integer latestChapterNumber;
+  private String  latestChapterTitle;
+  private LocalDateTime novelLastUpdateTime;
+
+  // 总数（用于"读到第 X 章 / 共 Y 章"）
+  private Integer totalChapters;
+
+  // 置顶
+  private Boolean isTop;
+  private LocalDateTime topTime;
+
+  ★ "共 Y 章" 怎么算 —— 见"十、待拍板点"第 4 条
+
+  【★ 命名注意】项目有过教训（问题 34：NovelRankVO 字段名首字母大写），
+    这里的 isTop 是小写开头 ✓。
+    Lombok @Data 对 Boolean isTop 生成 getIsTop()，
+    Jackson 序列化出的 JSON key 是 "isTop" ✓ 前端读 item.isTop 对得上。
+
+
+################################################################################
+  五、Repository 方法
+################################################################################
+
+--------------------------------------------------------------------------------
+5.1 BookshelfRepository
+--------------------------------------------------------------------------------
+
+  // 复活逻辑用
+  Optional<Bookshelf> findByUserIdAndNovelId(Integer userId, Integer novelId);
+
+  // 单条校验归属（★ 不是 findById）
+  Optional<Bookshelf> findByIdAndUserId(Integer id, Integer userId);
+
+  // 分页（recent_read / recent_add 两种排序都用它 + 不同的 Sort）
+  Page<Bookshelf> findByUserIdAndDeleted(Integer userId, Integer deleted,
+                                         Pageable pageable);
+
+  // ★ novel_update 排序用原生 SQL（要 JOIN novel 表）
+  @Query(value = ..., countQuery = ..., nativeQuery = true)
+  Page<Bookshelf> findPageOrderByNovelUpdate(...);
+
+  // 批量软删（★ 一次 UPDATE，天然免疫越权）
+  @Modifying
+  @Query("UPDATE Bookshelf b SET b.deleted = 1, b.updateTime = :now " +
+         "WHERE b.id IN :ids AND b.userId = :userId AND b.deleted = 0")
+  int softDeleteByIds(@Param("ids") List<Integer> ids,
+                      @Param("userId") Integer userId,
+                      @Param("now") LocalDateTime now);
+
+  【★ v2 修订：不需要为 3 种排序写 3 个 @Query】
+    recent_read / recent_add 可以直接用 Sort 对象表达：
+      Sort sort = Sort.by(
+          Sort.Order.desc("isTop"),
+          Sort.Order.desc("topTime"),
+          Sort.Order.desc("lastReadTime"),   // recent_add 换成 createTime
+          Sort.Order.desc("id"));
+      bookshelfRepository.findByUserIdAndDeleted(userId, 0,
+                                                 PageRequest.of(page-1, size, sort));
+    ⇒ 只有 novel_update 需要原生 SQL（因为要 JOIN）
+
+  【★ 为什么 novel_update 必须原生 SQL】
+    Bookshelf 和 Novel 手动关联（只存 novelId），没有 JPA 关系，
+    不能用 Specification.join，也不能用属性路径 "novel.lastUpdateTime"。
+    （这是决策 1 的直接后果 —— 用 novelId 换掉了 @OneToMany 的便利）
+
+  SQL 大概长这样：
+    SELECT b.* FROM bookshelf b
+    JOIN novel n ON b.novel_id = n.id
+    WHERE b.user_id = ? AND b.deleted = 0
+    ORDER BY b.is_top DESC, b.top_time DESC,
+             n.last_update_time DESC, b.id DESC
+
+    ★ Spring Data 会包一层 LIMIT/OFFSET，countQuery 要单独写：
+      SELECT COUNT(*) FROM bookshelf b
+      JOIN novel n ON b.novel_id = n.id
+      WHERE b.user_id = ? AND b.deleted = 0
+    ★ 注意：countQuery 里的 ORDER BY 要去掉（对 COUNT 无意义且浪费）
+
+  【★ 小提醒】nativeQuery 返回 Page 时，Spring Data 要求：
+    · 必须提供 countQuery
+    · 排序必须写在 SQL 里（不能靠 Pageable 的 Sort）
+      ⇒ 所以调用时传 PageRequest.of(page-1, size) 不带 Sort
+
+--------------------------------------------------------------------------------
+5.2 ChapterRepository 加批量方法（N+1 处理）
+--------------------------------------------------------------------------------
+
+  // 批量查：最新章节号 / 章节总数 / 上次读到的那一章的号
+  @Query("SELECT c.novelId AS novelId, " +
+         "       MAX(c.chapterNumber) AS maxNumber, " +
+         "       COUNT(c) AS total " +
+         "FROM Chapter c WHERE c.novelId IN :novelIds " +
+         "GROUP BY c.novelId")
+  List<NovelChapterStat> findChapterStats(@Param("novelIds") List<Integer> novelIds);
+
+  // 批量查"上次读的那一章"的章节号（★ v2 新增，替代冗余字段）
+  @Query("SELECT c.id AS chapterId, c.chapterNumber AS chapterNumber, " +
+         "       c.title AS title " +
+         "FROM Chapter c WHERE c.id IN :chapterIds")
+  List<ChapterBrief> findChapterBriefs(@Param("chapterIds") List<Integer> chapterIds);
+
+  【★ 待拍板点 5 的答案会影响这里 —— 见第十节】
+
+  ★★ 类型注意：JPQL 里 COUNT(c) 返回的是 **Long**，不是 Integer。
+     接口投影写错了会在运行时报错（编译期发现不了）：
+       interface NovelChapterStat {
+           Integer getNovelId();
+           Integer getMaxNumber();
+           Long    getTotal();      // ← 必须是 Long
+       }
+     ★ v1 草案写的是 getCount()，这里按实际别名改成 getTotal()
+
+  ★★ 另一个坑：JPQL 的构造器投影 / 接口投影，
+     别名必须和 getter 名严格对应（getMaxNumber ← AS maxNumber）。
+     对不上 Spring Data 会在启动时或首次调用时报错。
+
+
+################################################################################
+  六、Service 接口 IBookshelfService
+################################################################################
+
+  BookshelfItemVO      addToShelf(Integer userId, Integer novelId);
+  Page<BookshelfItemVO> list(Integer userId, int page, int size, String sort);
+  void                 top(Integer userId, Integer id, boolean top);
+  void                 remove(Integer userId, Integer id);
+  void                 batchRemove(Integer userId, List<Integer> ids);
+
+  // 内部：进度上报（被 NovelServiceIml.readChapter 调）
+  void updateProgress(Integer userId, Integer novelId,
+                      Integer chapterId, Integer chapterNumber);
+
+  ★ userId 从哪来 —— 见"十、待拍板点"第 6 条（建议：显式传参）
+
+--------------------------------------------------------------------------------
+3.5 ★★ readChapter 是游客接口 —— 必须判空（v1 草案完全漏了）
+--------------------------------------------------------------------------------
+
+  【问题】
+    LoginInterceptor.java:48
+      boolean isGuestEndpoint =
+          "GET".equalsIgnoreCase(method) && path.startsWith("/novels");
+
+    readChapter = GET /novels/{novelId}/chapters/{chapterId}
+    ⇒ **匹配游客路径，匿名可访问，拦截器不会拦。**
+
+    而 UserContext.getUser() 在匿名时返回 **null**
+    （UserContext.java:18，ThreadLocal.get() 没设就是 null）。
+
+  ⇒ 直接写：
+      Integer userId = UserContext.getUser().getUserId();
+                              // ↑ NullPointerException
+
+  ★★ 而且这个 NPE 会在**每次匿名用户翻页时**触发。
+     readChapter 现在被调用 500 万次都不会有事 ——
+     这是**新代码引入的回归**，不是既有 bug。
+
+  【修法】在 NovelServiceIml.readChapter 里：
+
+    // ========== 记录阅读进度（仅登录用户）==========
+    UserContextDTO current = UserContext.getUser();
+    if (current != null && current.getUserId() != null) {
+        bookshelfService.updateProgress(
+            current.getUserId(), novelId, chapterId, chapter.getChapterNumber());
+    }
+    // 游客阅读：不记录进度，直接返回
+
+  ★ 注意依赖方向：NovelServiceIml 依赖 IBookshelfService。
+    两者都是 Service 层，**同层互相依赖是可以的**，
+    但要注意别形成循环依赖（IBookshelfService 不要反过来依赖 INovelService）。
+
+  ★ 另一个选择：把"记录进度"做成 AOP 切面（类似 @RateLimit），
+    读接口上加个 @RecordProgress 注解。
+    ⇒ **本轮不做** —— 会重蹈 CacheErrorHandler 的覆辙
+      （注解生效 = 框架切面拦住了你；一旦有人绕过切面，静默失效）。
+      显式调用虽然丑，但**看得见**。
+
+
+################################################################################
+  七、定时任务
+################################################################################
+
+  【★ v2 修订 3 处：fixedDelay / SCAN / 刷完的幂等判断】
+
+  @Component
+  @RequiredArgsConstructor
+  @Slf4j
+  public class ProgressFlushTask {
+
+      private final StringRedisTemplate stringRedisTemplate;
+      private final BookshelfRepository bookshelfRepository;
+
+      // ★ r2 修订 A：fixedRate → fixedDelay
+      //   fixedRate 不管上一次跑完没有，到点就触发；
+      //   若某次刷新超过 5 分钟，会有两个任务同时刷同一批 key。
+      @Scheduled(fixedDelay = 300000)   // 上一次结束后再等 5 分钟
+      public void flushProgress() {
+          // ★ v2 修订 B：KEYS → SCAN
+          //   KEYS 是 O(N) 阻塞操作，会卡住整个 Redis。
+          //   SCAN 是游标式渐进遍历，不阻塞。
+          //   ★ Cursor 必须 close —— 它占着一条 Redis 连接！
+          try (Cursor<String> cursor = stringRedisTemplate.scan(
+                   ScanOptions.scanOptions().match("progress:*").count(100).build())) {
+              while (cursor.hasNext()) {
+                  // 解析 key → 读 Hash → 批量收集
+              }
+          }
+          // 批量 UPDATE，见下方幂等判断
+      }
+  }
+
+  【★★ v2 修订 C：刷完删不删？—— v1 的 TTL 理由和"不删"自相矛盾】
+
+    v1 草案里这两句挨着，但互相打架：
+      · "用户 7 天不看书，进度回 DB 也是准的，**Redis 里留着没意义**"
+      · "刷完是否删 Redis —— **不删**（会丢'正在读'状态）"
+
+    算一下账：不删的话，每个 key 每 5 分钟被 UPDATE 一次，
+    直到 7 天后 TTL 过期：
+      7 天 × 24 小时 × 12 次/小时 = 2016 次
+    ⇒ **每个 key 白写 2000 次 UPDATE**，且每次写的是同样的值。
+
+    【正确做法：不是"删不删"，而是"要不要写"】
+      让 DB 自己挡住重复写 —— 用 last_read_time 做版本号：
+
+        UPDATE bookshelf
+           SET last_read_chapter_id = ?,
+               last_read_time = ?,
+               update_time = ?
+         WHERE user_id = ? AND novel_id = ?
+           AND (last_read_time IS NULL OR last_read_time < ?)
+                                    -- ↑ 只有 Redis 的进度更新时才写
+
+    ⇒ Redis 里留着的 key 不会再产生无效 UPDATE
+    ⇒ 也不用删（"正在读"状态得以保留，符合 TTL 7 天的初衷）
+
+    【★★ 为什么版本号必须用 last_read_time，不能用 update_time】
+      update_time 会被 @PreUpdate 在任何字段变更时刷新 ——
+      包括**置顶、复活、软删**。
+
+      反例：
+        ① 用户读书 → Redis 里 updateTime = T
+        ② 用户置顶这本书 → DB 的 update_time = now() > T
+        ③ 定时任务刷进度 → 判断 "update_time < T" 不成立 → **跳过**
+        ⇒ **这次阅读进度永久丢失**
+
+      ★ last_read_time 只在进度变化时改，语义上就是"进度的版本号"。
+        选错版本号字段，比不做幂等更危险 —— 它会静默吞掉数据。
+
+  ------------------------------------------------------------------
+  决策点        建议          备选
+  ------------------------------------------------------------------
+  频率          5 分钟        1 分钟（更实时）/ 15 分钟（写压力小）
+  遍历方式      SCAN          KEYS（★ 不推荐，会阻塞 Redis）
+  幂等          last_read_time 比对  不做（白写 2000 次）
+  多实例        单机直接跑    加分布式锁（下一轮）
+  ------------------------------------------------------------------
+
+  【★ 多实例问题】
+    两个 app 容器会同时扫到同一批 key。
+    有了 last_read_time 幂等判断后，重复写**不会导致数据错误**
+    （第二次会被 WHERE 挡掉），只是浪费。
+    ⇒ 分布式锁的优先级因此降低了 —— 记在"本轮不做"里即可。
+
+  【要改的地方】
+    · Demo2Application 加 @EnableScheduling   ← 已核对：当前没有这个注解
+    · 新建 task/ProgressFlushTask.java
+    · flushProgress 加 @Transactional(rollbackFor = Exception.class)
+
+  【★ Spring 默认调度器只有 1 个线程】
+    现在只有一个任务，无所谓。将来加第二个定时任务时要注意排队问题。
+
+
+################################################################################
+  八、N+1 处理（第一版就做）
+################################################################################
+
+  列表组装的 SQL 次数：
+
+  ------------------------------------------------------------------
+  步骤                                        SQL 数
+  ------------------------------------------------------------------
+  查当页 bookshelf                              1
+  批量查 novel（IN）                            1
+  批量查章节统计 + 上次读的那一章（合并）         1
+  ------------------------------------------------------------------
+  合计                                          3 次（不是 1+20×3=61 次）
+  ------------------------------------------------------------------
+
+  ★ 步骤 3 合并成一条 SQL：
+    SELECT novel_id, MAX(chapter_number), COUNT(*)
+    FROM chapter WHERE novel_id IN (...) GROUP BY novel_id
+
+  ★ v2 说明：v1 草案担心的"再查一次章节号防冗余"（见 1.1 修订 1），
+    和这条 GROUP BY 是**两条不同的查询**（一条按 novelId 分组，
+    一条按 chapterId 精确查），但它们可以并行发出，
+    **不增加串行等待**。总 SQL 数从 3 变 4，仍远小于 61。
+
+    ⇒ 如果觉得 4 次太多，可以合并成一条：
+      SELECT novel_id, MAX(chapter_number), COUNT(*),
+             MAX(CASE WHEN id IN (...) THEN chapter_number END)
+      FROM chapter WHERE novel_id IN (...) GROUP BY novel_id
+      ★ 但可读性很差，不建议。**4 次 SQL 完全可接受。**
+
+  —— 是否合并见"十、待拍板点"第 8 条
+
+
+################################################################################
+  九、涉及文件清单
+################################################################################
+
+  ------------------------------------------------------------------
+  类型   文件                                     操作   约行数
+  ------------------------------------------------------------------
+  实体   entity/Bookshelf.java                    新增   70
+  实体   entity/Novel.java                        改     +6   ★ v1 写 +2
+  Repo   repository/BookshelfRepository.java      新增   45
+  Repo   repository/ChapterRepository.java        改     +20
+  Repo   repository/NovelChapterStat.java         新增   15   ★ v1 漏
+  Repo   repository/ChapterBrief.java             新增   12   ★ v1 漏
+  Svc    service/IBookshelfService.java           新增   15
+  Svc    service/BookshelfServiceImpl.java        新增   180
+  Svc    service/NovelServiceIml.java             改     +20  ★ v1 写 +15
+                                                              含游客判空
+  Ctrl   controller/BookshelfController.java      新增   90
+  DTO    dto/BookshelfAddDTO.java                 新增   10
+  DTO    dto/BookshelfTopDTO.java                 新增   10
+  DTO    dto/BookshelfBatchDeleteDTO.java         新增   10
+  VO     vo/BookshelfItemVO.java                  新增   40
+  任务   task/ProgressFlushTask.java              新增   70
+  启动   Demo2Application.java                    改     +1
+  DTO    dto/NovelDTO.java                        改     +4
+  VO     vo/NovelDetailVO.java                    改     +2
+  SQL    docker/mysql/init/01-schema.sql          改     +40  ★★ v1 漏！
+  ------------------------------------------------------------------
+  合计：19 个文件（12 新增、7 修改）
+
+  ★ v1 草案是 16 个（10 新增、6 修改），v2 补了 3 个：
+      · NovelChapterStat.java / ChapterBrief.java  （接口投影是独立文件）
+      · docker/mysql/init/01-schema.sql            （★ 漏了这个必炸）
+
+  ★ 不用改的：
+      · WebConfig —— 书架接口默认走严格路径 ✓（已核对 LoginInterceptor:48）
+      · NovelController —— readChapter 签名不变，进度写在 Service 内部
+      · CacheConfig —— 本轮不做缓存
+
+  ★★ 要改的 sql 文件怎么改 —— 见 1.3 节的完整流程图，别手写
+
+
+################################################################################
+  十、★ 待拍板点（8 条）
+################################################################################
+
+  ★ 下表是**建议值**，需要你确认。有异议的改数字即可。
+
+  ------------------------------------------------------------------
+  #  决策点                        v2 建议         v1 建议    变化
+  ------------------------------------------------------------------
+  1  索引数量                      2 个           3 个       ★ 改
+  2  复活时 create_time 是否重置   重置           重置       同
+  3  last_read_time=NULL 排前/后   排后           排后       同
+  4  "共 Y 章" 怎么算              批量 COUNT     批量 COUNT 同
+  5  ChapterRepository 返回类型    接口投影       接口投影   同
+  6  Service 拿 userId             显式传参       显式传参   同
+  7  定时任务                      5分钟+SCAN+幂等 5分钟+KEYS ★ 改
+  8  章节统计 SQL 合并还是分 2 条  合并 1 条      合并 1 条  同
+  ------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+① 索引数量：3 个 → 2 个
+--------------------------------------------------------------------------------
+  建议：2 个（各带 is_top/top_time 前缀）
+        idx_bookshelf_top_create / idx_bookshelf_top_read
+  理由：3 个里有 1 个（novel_update 用的）**永远不会被用于排序** ——
+        跨表排序必然 filesort，索引救不了。它是纯负担
+        （INSERT 时多维护一棵 B+ 树）。
+  备选：只留 1 个 (user_id, deleted, is_top, top_time, create_time)，
+        recent_read 会 filesort（数据量小无所谓）
+  权衡：多索引 → 写变慢；少索引 → 排序慢
+  ★ 无论选哪个，都要用 EXPLAIN 实测验证，别停在推理。
+
+--------------------------------------------------------------------------------
+② 复活时 create_time 是否重置
+--------------------------------------------------------------------------------
+  建议：重置 → "最近添加"按最新加入时间排（符合直觉）
+  备选：不重置 → 保留第一次加入的时间（历史更真实）
+  ★ 想两个都要的话要再加 first_add_time 字段 —— **不要，过度设计**
+
+--------------------------------------------------------------------------------
+③ last_read_time = NULL 排序
+--------------------------------------------------------------------------------
+  建议：排后（不加特殊处理，MySQL 默认）
+  备选：排前（加 ISNULL(last_read_time) DESC）
+  ★ 注意：加了 ISNULL() 是函数运算，**索引会失效** —— 见修订 2
+
+--------------------------------------------------------------------------------
+④ "共 Y 章" 计算
+--------------------------------------------------------------------------------
+  建议：A. 批量 COUNT chapter 表（和步骤 3 合并，多花 0 次 SQL）
+  备选：B. novel 表冗余 chapter_count 字段（★ 这将是第 4 个冗余字段，别加）
+        C. 用 latestChapterNumber 当总数（不准，章节可能被删）
+
+--------------------------------------------------------------------------------
+⑤ ChapterRepository 返回类型
+--------------------------------------------------------------------------------
+  建议：接口投影，类型安全且**可单测**
+        interface NovelChapterStat {
+            Integer getNovelId();
+            Integer getMaxNumber();
+            Long    getTotal();       // ★ COUNT 是 Long
+        }
+  备选：List<Object[]>（简单但类型不安全，要手动转，且测起来脆）
+  ★ 见 5.2 的别名对应关系
+
+--------------------------------------------------------------------------------
+⑥ Service 拿 userId 方式  ★ 这条最重要
+--------------------------------------------------------------------------------
+  建议：A. Controller 从 UserContext 取，传给 Service（**显式**）
+  备选：B. Service 里直接 UserContext.getUser()（隐式）
+
+  ★★ 选 A 的理由不是"分层干净"，而是**它直接决定你能不能写出纯单测**：
+
+    ❌ 隐式：Service 内部读 ThreadLocal
+       public void remove(Integer id) {
+           Integer userId = UserContext.getUser().getUserId();  // 测试里怎么给？
+       }
+       ⇒ ThreadLocal 需要有 HTTP 线程才有值。想单测，得先手动
+         UserContext.setUser(...) —— 那是**在测试里模拟框架**，脆。
+
+    ✅ 显式：参数传进来
+       public void remove(Integer userId, Integer id) { ... }
+       ⇒ @Test 里直接：bookshelfService.remove(999, 1); 不需要任何环境
+
+  ★★ 这一条直接关系到**判据 A**：
+     11 测试体系现在 4/8，差的正是"Mockito 纯单测（Novel / User 各一个）"。
+     决策点 6 选对了，判据 A 就顺路往前走一格；选错了，测试还是写不出来。
+
+  备注：现有 UserService.getCurrentUser() 用的是 B。要不要统一你定 ——
+        建议**新代码一律用 A**，老代码等下次改到时顺手改。
+
+--------------------------------------------------------------------------------
+⑦ 定时任务配置
+--------------------------------------------------------------------------------
+  建议：5 分钟 + SCAN + last_read_time 幂等
+  备选：1 分钟（更实时）/ 15 分钟（写压力小）
+  ★ v1 建议"KEYS 标 TODO" —— 不建议。SCAN 的成本只是多写 5 行，
+    而且 Cursor 必须 try-with-resources（占 Redis 连接）。
+    直接写对，比留 TODO 便宜。
+  备注：多实例问题已被幂等判断大幅缓解，分布式锁优先级降低。
+
+--------------------------------------------------------------------------------
+⑧ 章节统计 SQL 合并还是分 2 条
+--------------------------------------------------------------------------------
+  建议：合并成 1 条（MAX + COUNT 一次查完）
+  备选：分 2 条（语义更清晰，多 1 次 SQL）
+  ★ 注意 v2 的调整：为了不存 last_read_chapter_number 冗余字段，
+    还需要多一条"按 chapterId 查章节号"的查询（见 5.2）。
+    这是**修订 1 的代价**，但它是并行的，不增加串行等待。
+
+
+################################################################################
+  十一、本轮不做（明确划出边界）
+################################################################################
+
+  □ 缓存（书架列表缓存、进度缓存）
+    → 等有性能数据再说。当前 QPS 下加缓存是过度设计。
+
+  □ 分布式锁（定时任务多实例冲突）
+    → 有了 last_read_time 幂等判断后，重复刷不会导致数据错误，
+      只是浪费。下一轮做 Redis 锁时一起。
+
+  □ 书籍分组 / 标签（"在读"、"想读"、"读完"）
+    → 需求里没有。加的话要再开一张表。
+
+  □ 多设备进度冲突合并
+    → Redis 里已存 updateTime 时间戳，但不做冲突算法（"取最新"就够了）。
+
+  □ 前端（书架页 / api/bookshelf.js / 列表展示 author）
+    → 后端只提供接口。★ 但注意：不做的后果是"author 字段加了没人用"，
+      如果要展示，NovelListView / NovelDetailView 也要改。
+
+  □ 并发双击加入书架的竞态处理
+    → 撞唯一索引会抛异常。MVP 接受，前端按钮置灰即可。
+
+  □ 进度上报改成 AOP 注解（@RecordProgress）
+    → 会重蹈 CacheErrorHandler 的覆辙（绕过切面就静默失效）。
+      显式调用丑但看得见。
+
+  □ Flyway / Liquibase 迁移
+    → 第三梯队。现在靠"改完实体记得同步 schema.sql"的人工纪律，
+      这条纪律必然会忘 —— 所以它是技术债。
+
+
+################################################################################
+  十二、实现顺序建议
+################################################################################
+
+  ------------------------------------------------------------------
+  任务                              文件数  难度   备注
+  ------------------------------------------------------------------
+  1  Novel 加 author                 6      ★     热身，走通全链路
+  2  Bookshelf 实体 + Repository     6      ★★    表结构落地 + schema.sql
+  3  BookshelfService + Controller   7      ★★★   主体工作量
+  4  readChapter 写 Redis 进度       2      ★★    改现有代码，注意回归
+  5  定时任务刷回 DB                 2      ★★★   最后做
+  ------------------------------------------------------------------
+
+  ★ 每步做完跑一次 ./mvnw test —— 判据 B 不能坏。
+
+  ★ 步骤 1 是"垂直切片"：把 实体 → DTO → VO → Service → 建表 → 验证
+    整条链路走一遍，建立肌肉记忆。
+    ★ 特别注意步骤 1 会碰 schema.sql —— 这是**故意**的，
+      让你在风险最低的第一步就把"三处同步"的流程走一遍。
+
+  ★ 步骤 4 是**唯一改到现有代码的一步**，风险最高：
+    · readChapter 是游客接口 → 必须判空（3.5）
+    · readChapter 现在 @Transactional(readOnly = true) 里写 Redis
+      （既有问题 13）—— 新增的 Hash 写会加剧这一点
+    · 改完必须做**回归验证**：匿名读章节还能不能正常返回
+
+
+################################################################################
+  十三、★ 验证清单（v2 新增）
+################################################################################
+
+  ★ 这个项目的判据规矩：
+    ① 先写期望值，再看结果 —— 否则会把任何结果都解释成成功
+    ② ★★ 判据要看 **body 的 code 字段**，不能看 HTTP 状态码 ——
+       GlobalExceptionHandler 里 RuntimeException 也返回 HTTP 200！
+       看状态码的判据是**假阳性判据**，比没有判据更危险
+    ③ 故障演练 > 看代码
+
+  ------------------------------------------------------------------
+  步骤          期望值                         怎么验
+  ------------------------------------------------------------------
+  1 author     POST /novels 后 GET /novels/{id}  body.code=200
+               返回体里有 author               且 data.author="佚名"
+               ★ 制造必失败场景：不传 author，
+                 期望仍是"佚名"而不是 null/报错
+
+  2 索引       SHOW INDEX FROM book_db.bookshelf;
+               → 1 PRIMARY + 1 UNIQUE + 2 KEY
+               ★ EXPLAIN 三种排序的 SQL：
+                 Extra 出现 "Using filesort" = 索引没生效
+
+  3 接口       5 个接口全部 body.code=200
+               越权场景：用 A 用户的 token 删 B 用户的记录
+                 → 期望 body.code=500 且 msg 提示无权限
+               ★ 这条必须测 —— 是安全边界不是功能
+
+  4 游客回归   不带 token 读章节
+                 → 期望 body.code=200，正常返回正文
+                 ★ 且日志里**不能**出现 NPE
+               带 token 读章节
+                 → 期望 redis 里出现 progress:{userId}:{novelId}
+
+  5 定时任务   ★ 故障演练：把 fixedDelay 临时改成 10 秒
+               读 3 章 → 等一个周期 → 查 DB
+                 SELECT last_read_chapter_id, last_read_time FROM bookshelf
+                 → 期望等于 Redis 里的值
+               ★ 幂等验证：不读书，等两个周期
+                 → 期望那条记录的 update_time **不再变化**
+                   （变了说明幂等判断没生效，白写）
+  ------------------------------------------------------------------
+
+  ★★ 步骤 5 的幂等验证是**这一轮最容易自欺欺人的地方** ——
+     "数据对了"和"没有重复写"是两件事，要分开验。
+
+
+================================================================================
+                              文件结束
+================================================================================

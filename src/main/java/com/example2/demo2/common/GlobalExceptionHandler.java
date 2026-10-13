@@ -55,7 +55,7 @@ public class GlobalExceptionHandler {
         return Result.error("上传失败：文件大小不能超过 10MB");
     }
 
-    //;所有异常最后的底裤
+    //所有异常最后的底裤
     @ExceptionHandler(Exception.class)
     public Result<Void> Exception(Exception e) {
         log.warn("最后的异常处理器:", e);

@@ -3,6 +3,7 @@ package com.example2.demo2.service;
 import com.example2.demo2.common.exception.BusinessException;
 import com.example2.demo2.dto.NovelDTO;
 import com.example2.demo2.entity.Novel;
+import com.example2.demo2.service.Iservice.INovelService;
 import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

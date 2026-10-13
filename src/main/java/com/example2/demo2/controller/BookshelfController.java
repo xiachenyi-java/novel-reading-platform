@@ -7,7 +7,7 @@ import com.example2.demo2.dto.BookshelfBatchDeleteDTO;
 import com.example2.demo2.dto.BookshelfTopDTO;
 import com.example2.demo2.entity.Bookshelf;
 import com.example2.demo2.enums.BookshelfSort;
-import com.example2.demo2.service.IBookshelfService;
+import com.example2.demo2.service.Iservice.IBookshelfService;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;

@@ -1,4 +1,4 @@
-package com.example2.demo2.service;
+package com.example2.demo2.service.Iservice;
 
 import com.example2.demo2.dto.ChapterDTO;
 import com.example2.demo2.dto.NovelDTO;
@@ -11,39 +11,45 @@ import org.springframework.data.domain.Page;
 import java.util.List;
 
 public interface INovelService {
-    // ========== 1. 创建小说 ==========
+
+    //               管理员接口
+
+    // 1. 创建小说
     Novel addNovel(NovelDTO dto);
 
-    // ========== 2. 发布章节（核心） ==========
+    // 2. 发布章节
     Chapter addChapter(Integer novelId, ChapterDTO dto);
 
-    // ========== 3. 修改章节 ==========
+    // 3. 修改章节
     Chapter updateChapter(Integer novelId, Integer chapterId, ChapterDTO dto);
 
-    // ========== 4. 删除章节 ==========
+    // 4. 删除章节
     void deleteChapter(Integer novelId, Integer chapterId);
 
-    //========== 5.删除小说 ==========
+    // 5.删除小说
     void deleteNovel(Integer id);
 
-    //========== 6.修改小说 ==========
+    // 6.修改小说
     void updateNovel(Integer id, NovelDTO dto);
+
+
+    //               读者接口
 
     // 1. 小说列表（分页，按更新时间倒序）,增加分类
     Page<Novel> findPageNovel(int page, int size, String category, String status, String keyword);
 
-    // 3. 小说详情 + 章节目录
+    // 2. 小说详情 + 章节目录
     NovelDetailVO findDetail(Integer novelId);
 
-    // 4. 阅读某一章（返回完整正文）
+    // 3. 阅读某一章（返回完整正文）
     Chapter readChapter(Integer novelId, Integer chapterId);
 
-    //返回总排行榜
+    // 4.返回总排行榜
     List<NovelRankVO> findRanking(int top);
 
-    //返回日排行榜
+    // 5.返回日排行榜
     List<NovelRankVO> findDailyRanking(int top);
 
-    //分类列表
+    // 6.分类列表
     List<String> findAllCategories();
 }

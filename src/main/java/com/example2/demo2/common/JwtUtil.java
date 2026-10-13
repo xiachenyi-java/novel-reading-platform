@@ -64,8 +64,4 @@ public class JwtUtil {
         return claims.get("username", String.class);
     }
 
-    public String getUserRoleFromToken(String token) {
-        Claims claims = parseToken(token);
-        return claims.get("role", String.class);
-    }
 }

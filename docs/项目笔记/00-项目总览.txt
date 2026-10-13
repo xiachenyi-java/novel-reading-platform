@@ -84,145 +84,31 @@
 
 
 ################################################################################
-  三、后端架构
+  三 / 四 / 五、字典区（包结构 · 数据模型 · 接口清单 · 前端结构）
 ################################################################################
 
-【包结构】
-  com.example2.demo2
-  ├── Demo2Application               启动类
-  ├── common/                        横切关注点
-  │   ├── Result<T>                  统一响应 {code, msg, data}
-  │   ├── GlobalExceptionHandler     全局异常处理
-  │   ├── JwtUtil                    JWT 生成/解析
-  │   ├── UserContext                ThreadLocal 存当前用户
-  │   ├── RateLimitAspect            @RateLimit 限流切面
-  │   ├── annotation/                @RateLimit、@RequireAdmin
-  │   └── exception/                 BusinessException、RateLimitException
-  ├── config/
-  │   ├── SecurityConfig             BCrypt Bean + 放行所有请求
-  │   ├── LoginInterceptor           ★ 认证/鉴权核心
-  │   ├── WebConfig                  注册拦截器 + /uploads 静态映射
-  │   ├── CorsConfig                 只允许 localhost:5173
-  │   └── CacheConfig                RedisCacheManager（✓ 已在使用）
-  ├── controller/                    User / Novel / File
-  ├── service/                       UserService、INovelService + NovelServiceIml
-  ├── repository/                    User / Novel / Chapter
-  ├── entity/                        User / Novel / Chapter
-  ├── dto/                           入参对象（带校验注解）
-  └── vo/                            LoginVO / NovelDetailVO / NovelRankVO
+  ★ 这四份"字典"统一放在一份文件里，本文件**不再放副本**：
 
-【数据库表】
-  ------------------------------------------------------------------
-  表        关键字段                                   索引情况
-  ------------------------------------------------------------------
-  user      id, username(unique), password_hash, role    ✓ username 唯一索引
-  novel     id, title, summary, cover_url, category,     ✓ 3 个索引
-            status, total_words, last_update_time
-            · PRIMARY (id)
-            · idx_novel_last_update_time (last_update_time)
-            · idx_novel_category_last_update_time (category, last_update_time)
-            ★ 用 @Table(indexes=...) 在实体里声明，重建表会自动创建
-  chapter   id, novel_id, chapter_number, title,         ✓ (novel_id, chapter_number) 联合索引
-            content(LONGTEXT), word_count, create_time
-            · 已用 @Table(indexes=...) 声明，会随建表创建
-  ------------------------------------------------------------------
+        docs/项目说明-参考附录.txt
+          附 A  目录结构     后端 48 类 + 前端 16 组件
+          附 B  数据模型     4 张表 + 索引 + 字段说明
+          附 C  接口清单     21 个接口（路径 / 权限 / 限流）
+          附 D  Redis Key    8 个业务 key + Spring Cache 2 个缓存区
 
-【Redis Key 全景】
-  ------------------------------------------------------------------
-  Key                            类型        TTL      用途
-  ------------------------------------------------------------------
-  refresh_token:{uuid}           String      7天      refreshToken → userId
-  user_refresh:{userId}          String      7天      ✓ 已双向维护
-  blacklist:user:{userId}        Hash        无       field=token → 过期时间戳
-  user:info:{userId}             String      30分     用户信息缓存
-  rate_limit:{key}:{ip}          String      window秒 限流计数
-  ranking:novel:total            ZSET        无       总榜热度
-  ranking:novel:day:{yyyyMMdd}   ZSET        2天      ✓ 读写均有
-  ------------------------------------------------------------------
+  ★ 为什么这里不放副本（2026-10-11 清理）
+    · 原先此处有一份副本，实测与参考附录
+        Redis Key  7/7 完全重合
+        接口清单   21/21 完全重合
+      —— 就是同一份字典抄了两遍。
+    · 而且副本已经**过期**：漏了 bookshelf 表、Bookshelf 相关类、
+      progress:* key，还写着「MyShelf.vue ★ 空壳，只有一行字」
+      （实际已 668 行，早已接上 api/bookshelf.js）。
+    · 双份维护 = 加一个接口要改两个文件，迟早对不上。
+      本文件只回答「**做到哪了 / 下一步做什么**」，
+      **事实字典一律查参考附录**。
 
-
-################################################################################
-  四、接口清单
-################################################################################
-
-【用户模块 /users】
-  ------------------------------------------------------------------
-  方法   路径                 权限      说明
-  ------------------------------------------------------------------
-  POST   /users/register      公开      注册（限流 5次/60秒/IP）
-  POST   /users/login         公开      登录（限流 5次/60秒/IP）
-  POST   /users/logout        需登录    登出（拉黑 token）
-  POST   /users/refresh       公开      用 refreshToken 换新 token
-  ------------------------------------------------------------------
-
-【小说模块 /novels】
-  ------------------------------------------------------------------
-  方法   路径                              权限      说明
-  ------------------------------------------------------------------
-  POST   /novels                           管理员    创建小说
-  PUT    /novels/{id}                      管理员    修改小说（2026-09 新增）
-                                                    参数：@PathVariable id + NovelDTO
-  POST   /novels/{novelId}/chapters        管理员    发布章节
-  PUT    /novels/{novelId}/chapters/{id}   管理员    修改章节
-  DELETE /novels/{novelId}/chapters/{id}   管理员    删除章节
-  DELETE /novels/{id}                      管理员    删除小说
-  GET    /novels                           游客     小说列表
-                                                  参数：page / size / category /
-                                                        status / keyword（后三个可选）
-  GET    /novels/categories                游客     获取全部分类（动态，DISTINCT）
-  GET    /novels/{id}                      游客     小说详情 + 目录
-  GET    /novels/{novelId}/chapters/{id}   游客     阅读章节
-  GET    /novels/ranking                   游客     排行榜（top + type）
-  ------------------------------------------------------------------
-
-【文件模块 /upload】
-  ------------------------------------------------------------------
-  POST   /upload                           需登录    上传封面图
-  ------------------------------------------------------------------
-
-【书架模块 /bookshelf】★ 2026-10-08 新增，2026-10-10 五个接口全部完成
-  ------------------------------------------------------------------
-  方法   路径                        权限      说明
-  ------------------------------------------------------------------
-  POST   /bookshelf                 需登录    加入书架
-                                              三分支：新建 / 幂等返回 /
-                                              复活 deleted=1 的旧记录
-  GET    /bookshelf                 需登录    书架列表
-                                              参数：page / size / sort
-                                              sort = RECENT_READ（默认）
-                                                   | RECENT_ADD | NOVEL_UPDATE
-                                              ★ 大小写不敏感，非法值兜底为默认
-  PUT    /bookshelf/{id}/top        需登录    置顶 / 取消置顶
-                                              Body: {"top": true|false}
-  DELETE /bookshelf/{id}            需登录    移出一本（软删）
-  POST   /bookshelf/batch-remove    需登录    批量移出，Body: {"ids":[1,2,3]}
-  ------------------------------------------------------------------
-  ★ 路径是**单数** /bookshelf，与设计文档一致
-  ★ 详情见 docs/项目笔记/14-书架系统.txt
-  ⚠ 返回值目前是实体 Bookshelf，不是 VO
-
-
-################################################################################
-  五、前端结构
-################################################################################
-
-  novel-frontend/
-  ├── src/main.js                注册 Element Plus + 全部图标 + Pinia + Router
-  ├── src/router/index.js        8 条路由，/shelf 和 /write 有登录守卫
-  ├── src/api/index.js           axios 实例：baseURL=/api，自动带 Bearer，401 跳登录
-  ├── src/api/user.js            登录 / 注册
-  ├── src/api/novel.js           列表 / 详情 / 章节CRUD / 上传 / 排行榜
-  └── src/views/
-      ├── NovelListView.vue      书城首页（服务端分页 + 搜索 + 分类筛选 + Banner）
-      ├── NovelDetailView.vue    详情 + 目录 + 管理员增删改章节
-      ├── ChapterReadView.vue    阅读器 + 上下章
-      ├── LoginView.vue          登录（粒子背景动画）
-      ├── RegisterView.vue       注册
-      ├── RankingView.vue        排行榜（总榜/日榜切换）
-      ├── WriteNovel.vue         发布小说
-      └── MyShelf.vue            ★ 空壳，只有一行字
-
-  Vite 代理：/api → http://localhost:8080，并 rewrite 掉 /api 前缀
+  ★ 查字典别整读（参考附录 323 行），先 grep 定位小节：
+      grep -n "附 [A-D]" docs/项目说明-参考附录.txt
 
 
 ################################################################################
@@ -237,7 +123,7 @@
     为什么改成这样：原来两张进度表各自维护，13 个大类里 5 处对不上
     （02/04/06/08/11）。这和 novel.totalWords 是同一个病 ——
     冗余数据必须多处同步，漏一处就不一致。区别是代码那边有性能收益，
-    文档这边没有，所以**消除冗余**才是对的解。详见第八节末尾。
+    文档这边没有，所以**消除冗余**才是对的解。详见「八·附：度量方式事故」。
 
   【图例】■ 达标   △ 进行中   □ 未开始   — 持续累积
 
@@ -350,7 +236,8 @@
     □ P1  ★ 可观测性（12）—— 从最后提到这里
           · traceId 串联一次请求的所有日志
           · 慢接口监控（超过 N ms 打 warn）
-          · 兜底异常改 log.error（现在是 warn，见第八节问题 18）
+          · 兜底异常改 log.error（现在是 warn，见问题清单 **15**）
+            ★ 此处原写「第八节问题 18」—— 那是旧副本的编号，权威编号是 15
           · 端口存活告警（阿里云云监控 + 短信）
     □ P1  ★ 安全加固（13）—— 从最后提到这里
           · 上传：扩展名白名单 + 文件头 magic number 校验
@@ -526,112 +413,50 @@
 
 
 ################################################################################
-  八、已知问题速查（详细定位见各大类项目笔记）
+  八、已知问题速查
 ################################################################################
 
-  【✅ 已解决（截至 2026-10-05）】
-  ~~1.  登出后 refreshToken 仍有效~~ —— 已补 user_refresh 反向索引（03）
-  ~~3.  文件超限异常处理器参数类型错误~~ —— 已修（13、02）
-  ~~6.  日榜只读不写~~ —— 已补写入（01、06）
-  ~~7.  日榜 key 无 TTL~~ —— 已加 2 天过期（01、06）
-  ~~9.  分类筛选是前端假分页~~ —— 已下推到后端（01、07）
-  ~~12. CacheConfig 零使用~~ —— CacheConfig 已被手动缓存使用（05）
+  ★ 问题清单**不在这里放副本** —— 唯一权威源是：
 
-  ~~缓存降级失效~~ —— ★ 2026-10-05 发现，2026-10-06 修复 ✅
+        docs/项目笔记/问题清单.txt
+          · 顶部「活跃问题速查」表 = 现在要动手的（26 行，先看这个）
+          · 下面按严重度分区     = 每条含 位置 / 原因 / 修法 / 判据
+          · 【✅ 已解决】区        = 修过的条目（含原问题 1 / 2 / 3 三条 P0）
 
-    【问题】findDetail 为了做空值缓存，从 @Cacheable 改成了手动
-      cacheManager.getCache("novel").get(...) 调用。
-      结果：CacheErrorHandler 静默失效 —— 它由 AbstractCacheInvoker 调用，
-      而那是 AOP 拦截器 CacheAspectSupport 的父类，只保护注解驱动的调用；
-      手动 cache.get() 直接进 RedisCache，没有 try/catch 兜底。
-      ★ 一句话：**"注解生效" = "框架的切面拦住了你"。**
+  ★ 找「已解决的历史条目」也去问题清单（它分了 ✅ 区和未解决区），
+    本节不再单独维护一份 —— 原来那份已删（原因见下）。
 
-    【当时的实测】（docker stop demo2-redis，5/5 次可复现）
-      · GET /novels/{id} → 挂起 60.0 秒 → HTTP 200 +
-                           {"code":500,"msg":"Redis command timed out"}
-      · GET /novels      → 不受影响，正常 200
-      · 日志里 CacheErrorHandler 的 warn 一次都没触发
+  ★ 为什么删掉这里的副本（2026-10-11 清理）
+    · 此处原先有一份"问题速查"，但和问题清单.txt **编号对不上**，
+      同一件事两边指两个号：
 
-    【★ 为什么"挂起"比"500"更糟】
-      项目当时没配 spring.data.redis.timeout，用 Lettuce 默认 60 秒命令超时
-      → 每个请求占满一条 Tomcat 线程卡 60 秒 → Redis 一挂 + 请求量稍大
-      就级联拖垮整个应用（连不依赖 Redis 的接口也开始排队）。
+        同一件事                   问题清单(权威)   本文件旧§八
+        上传只校验 Content-Type         4              2
+        排行榜没有防刷                  7              8
+        搜索 keyword 没 trim            8             22
+        Refresh Token 多设备            9             28
+        404 被转成 500                 16             29
+        前端"免费" tab 死代码           13             20  ← ★ 而"20"在权威
+                                                          清单里指的是
+                                                          schema.sql 编码问题
 
-    【★★★ 判据修正（这个认知比 bug 本身值钱）】
-      旧判据"HTTP 200 = 降级有效"是**错的**。
-      GlobalExceptionHandler.handleRuntimeException 没有 @ResponseStatus，
-      所有 RuntimeException 都返回 HTTP 200。
-      必须看 **body 的 code 字段**：code=200 才算真的成功。
-      ★ 通用教训：**判据本身也要验证** —— 假阳性判据比没有判据更危险。
+      ⇒ 照着旧§八 的编号去查问题清单，**会查错条目**。
+        这不是省 token 的问题，是会改错东西。
+    · 旧副本还**过期**：写着「10. MyShelf.vue 是空壳」——
+      MyShelf.vue 早已是 668 行的完整书架页。
+    · 旧副本还比权威源**简略**：问题清单每条有 位置 / 原因 / 修法 / 判据，
+      旧§八 只有一行摘要，没有信息增量。
 
-    【✅ 修复（2026-10-06）】
-      第一级 · 超时（止血）—— application-dev.properties
-        spring.data.redis.timeout=500ms
-        spring.data.redis.connect-timeout=500ms
-      第二级 · try-catch（治疗）—— NovelServiceIml.findDetail
-        4 处 Redis 调用各包 try-catch：两次 get、两次 put
-        · 读失败 → 当"缓存未命中"，继续走 DB（**不要 rethrow**）
-        · 写失败 → 吞掉异常，不影响主流程
+  ★ 查某条问题用 grep，别整读（问题清单 504 行）：
+      grep -n "^  23\." docs/项目笔记/问题清单.txt
+  ★ 编号是"当时分配的"不是顺序，**只认问题清单里的编号**。
 
-    【✅ 三阶段实测数据】
-      ------------------------------------------------------------------
-      阶段                  耗时        HTTP   body.code   接口可用性
-      ------------------------------------------------------------------
-      ① 改造前（60s 超时）  60.0s 挂起  200    500         ❌ 打不开
-      ② 只加超时配置        0.51s       200    500         ❌ 打不开
-      ③ 再加 try-catch      1.01s       200    200         ✅ 有数据
-      ------------------------------------------------------------------
-      ★ ②→③ 才是真正的修复。② 只是 fail fast（快速失败），
-        ③ 才是 graceful degradation（优雅降级）。
-      并发压测（500 请求 / 100 并发）：P50 1.491s，0 个超 5 秒；
-      不依赖 Redis 的 /novels 列表 P50 0.248s，未被拖垮。
+  ==================================================================
 
-    【★ 附带发现：Lettuce 断连时会缓冲写命令】
-      演练时"详情缓存写入失败"的 warn 一次都没触发。
-      重启 Redis 后**不发任何请求**，novel::1 就已经存在了
-      → Lettuce 在断连期间缓冲写命令，重连后自动补发。
-      ★ 影响：put 的 catch 在当前场景不会触发；disconnectedBufferSize
-        默认 64KB，缓冲满了才真正失败 → 写失败是**延迟暴露**的。
-      ★ 本质：同步 API 掩盖了异步现实。connection.set() 返回 void，
-        **"没有返回值的远程调用，等于没有错误处理。"**
 
-    ★ 完整过程 → docs/实战笔记/05-缓存三大问题实战.txt 第四节
-  ~~19. Maven 命令行构建失败~~ —— JDK 25 + Lombok 1.18.46 已修（02）
-  ~~deleteChapter 的 @CacheEvict key 写错~~ —— #id 已改成 #novelId（05）
-  ~~11. chapter 表索引丢失~~ —— 已用 @Table(indexes=...) 声明（07）
-  ~~21. 列表接口没有 size 上限防御~~ —— 已加 page/size 兜底（07）
-  ~~updateNovel 缺 @CacheEvict~~ —— 已加（01）
-  ~~updateNovel 缺 @Valid~~ —— 已加（01）
-  ~~updateNovel 的 @Operation 描述写错~~ —— 已改成"修改小说"（01）
-  ~~updateNovel 没有走 RESTful 路径~~ —— 已改成 PUT /novels/{id}（01）
-  ~~updateNovel 返回值语义不一致~~ —— 已改成 Result<Void>（01）
-
-  【🟠 安全类 · 未解决】
-  2.  上传可伪造 Content-Type + /uploads 静态映射 —— 存储型 XSS 风险（13）
-  4.  passwordHash 被写进 Redis 缓存（05、13）
-  5.  CorsConfig 硬编码 localhost:5173（08）
-
-  【🟡 功能/性能 · 未解决】
-  8.  排行榜无防刷，刷新即加热度（01、06）★ 现在就在产生假数据
-  10. MyShelf.vue 是空壳（01）
-  20. 前端"免费"tab 的 isFree 字段不存在，点了等于没筛（01）
-  13. readChapter 在只读事务里写 Redis（01、06）
-  22. 搜索的 keyword 没 trim，输入 " 剑 " 匹配不到"剑来"（07）
-  28. Refresh Token 多设备会互相覆盖（03）
-      原因：user_refresh:{userId} 是 String，只能存一个 token
-      后果：A 设备登出会删掉 B 设备的 token，且自己没删干净
-
-  【🟢 质量类 · 未解决】
-  14. NovelRankVO 字段名首字母大写（08）
-  15. Novel.setChapters() 空方法体、refresh() 里未使用变量（08）
-  18. 兜底异常用 log.warn 而非 log.error（12）
-  23. LoginInterceptor 的空 catch 吞掉异常，看不出有人在伪造 token（12）
-  29. 404 被转成 500（12）
-      实测：PUT /novels/1（不存在的路径）返回
-            HTTP 200 + {"code":500,"msg":"系统繁忙，请稍后再试"}
-      原因：NoResourceFoundException 被兜底处理器捕获
-      危害：前端调错 URL 时看到"系统繁忙"，排查方向被误导
-      修法：单独处理 NoResourceFoundException，返回 404
+################################################################################
+  八·附：度量方式事故（唯一保留在此的原因：本文件独有）
+################################################################################
 
   【★ 2026-10-06 · 进度表事故（不是代码 bug，是度量方式的问题）】
 
@@ -679,8 +504,10 @@
         这就是数字该有的用法：驱动一个具体的动作。
 
   【内容说明】
-    以上问题在 docs/项目说明-给AI.txt 的「十、已知问题与坑」里有更详细的
-    定位、原因和修法。
+    · 上面这段"进度表事故"是**本文件独有**的（讲的是本文件第六节这张表
+      的来历），全库只此一份，故保留在此，不进问题清单。
+    · 具体的问题条目（编号 / 位置 / 原因 / 修法）**一律看**
+      docs/项目笔记/问题清单.txt —— 本文件不再重复。
 
 ================================================================================
                               文件结束

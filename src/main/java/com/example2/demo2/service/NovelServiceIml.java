@@ -10,6 +10,8 @@ import com.example2.demo2.entity.Novel;
 import com.example2.demo2.repository.ChapterRepository;
 import com.example2.demo2.repository.NovelRepository;
 import com.example2.demo2.repository.NovelSpecifications;
+import com.example2.demo2.service.Iservice.IBookshelfService;
+import com.example2.demo2.service.Iservice.INovelService;
 import com.example2.demo2.vo.NovelDetailVO;
 import com.example2.demo2.vo.NovelRankVO;
 import lombok.RequiredArgsConstructor;

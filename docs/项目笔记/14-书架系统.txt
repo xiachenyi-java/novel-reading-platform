@@ -1,0 +1,539 @@
+================================================================================
+              项目笔记 14 · 书架系统 · 实现进度
+                          小说管理系统
+                    最后更新：2026-10-10
+================================================================================
+
+【这份文档是什么】
+  书架系统从设计到落地的进度记录。设计文档在 docs/设计/书架系统-设计方案.txt，
+  那份是"打算怎么做"，这份是"做到哪了 + 踩了什么坑"。
+
+  ★ 编号说明：01~13 与知识笔记一一对应，本文件是**第 14 个"专项"笔记**，
+    没有对应的知识笔记（书架系统是贯穿多个大类的综合实践）。
+
+【★ 当前状态速览】
+  按设计文档"十二、实现顺序"的 5 步：
+    步骤 1  Novel 加 author             ✅ 完成
+    步骤 2  Bookshelf 实体 + Repository  ✅ 完成（唯一约束已补进库）
+    步骤 3  Service + Controller         ✅ 5/5 接口全通
+                                            剩：返回值改 VO（步骤 3 尾巴）
+    步骤 4  readChapter 写 Redis 进度    ✅ 完成（含游客判空）
+    步骤 5  定时任务刷回 DB              ✅ 完成（ProgressFlushTask）
+  ⇒ **5 步全部走完**（步骤 3 的"返回值改 VO"是尾巴，不影响主线）
+
+  ------------------------------------------------------------------
+  ✅ 已修的
+  ------------------------------------------------------------------
+  ✅ 唯一约束 uk_bookshelf_user_novel 已进库（原问题 21）
+  ✅ 路径统一为单数 /bookshelf（原问题 22）
+  ✅ BookshelfTopDTO.top 改成 Boolean（原为 Integer，传 2 会存进库）
+  ✅ BookshelfSortConverter 从 common/ 移到 config/（它是 Spring 配置 bean）
+  ✅ 编译通过（./mvnw -o clean compile）
+
+  ------------------------------------------------------------------
+  ⚠⚠ 仍未解决的（按紧急度）
+  ------------------------------------------------------------------
+  🔴 01-schema.sql **编码变成 UTF-16LE** → docker 建表会失败（问题 20）
+     内容已对（4 张表齐全），但 MySQL 客户端读不了 UTF-16。
+     根因：PowerShell 的 > 重定向默认写 UTF-16LE。
+  🟡 remove() 没删 Redis 的进度 key → 移出再重新加入，旧进度被写回来（问题 24）
+  🟡 top()/remove() 不过滤 deleted → 软删掉的记录还能被置顶（问题 23）
+  🟡 书架 + 进度功能 0 测试
+  ⚪ 返回值仍是实体 Bookshelf，不是 BookshelfVO
+
+  判据 B（./mvnw test 可靠跑通）状态：**待跑**
+    ★ 本轮动过的现有文件：NovelServiceIml（含 readChapter）、NovelController、
+      INovelService、NovelRepository、ChapterRepository、UserContextDTO、
+      Demo2Application
+      ⇒ **碰了现有的 readChapter**，回归验证不能省。
+
+
+################################################################################
+  一、已完成的部分（可验收）
+################################################################################
+
+--------------------------------------------------------------------------------
+1.1 步骤 1：Novel 加 author
+--------------------------------------------------------------------------------
+  文件清单（6 处，全链路）：
+    ✅ entity/Novel.java            author 字段
+    ✅ dto/NovelDTO.java            author（故意不加 @NotBlank）
+    ✅ vo/NovelDetailVO.java        author
+    ✅ NovelServiceIml.addNovel     author 兜底成"佚名"
+    ✅ NovelServiceIml.updateNovel  author 兜底成"佚名"
+    ✅ docker/mysql/init/01-schema.sql  已同步
+
+  ★ 待验证（还没跑）：
+      □ PUT /novels/1 不传 author       → 期望 body.code=200 且库里 ="佚名"
+      □ PUT /novels/1 传 author="   "   → 期望同上（isBlank 分支）
+    判据一律看 **body 的 code 字段**，不看 HTTP 状态码。
+
+--------------------------------------------------------------------------------
+1.2 步骤 2：Bookshelf 实体 + Repository
+--------------------------------------------------------------------------------
+  ✅ entity/Bookshelf.java          已建（含 @Index × 2 + @UniqueConstraint × 1）
+  ✅ dev 库 bookshelf 表            已建
+  ✅ dev 库唯一约束 uk_bookshelf_user_novel  **已补进库**（2026-10-10 复核）
+
+     现在的索引（SHOW INDEX → 13 行）：
+       PRIMARY                  (id)
+       uk_bookshelf_user_novel  (user_id, novel_id)                 ★ 唯一
+       idx_bookshelf_top_create (user_id, deleted, is_top, top_time, create_time)
+       idx_bookshelf_top_read   (user_id, deleted, is_top, top_time, last_read_time)
+     共 4 个，与设计文档 1.1 节一致。
+
+  ── 这段是坑的历史记录，别删（★ 面试素材）────────────────────
+     2026-10-08 这份文档一度写着"唯一约束已确认存在（问题 21 已解决）"，
+     但三个判据复核后结论相反：**约束根本不存在**。
+     判据 3（★ 功能性判据，最硬）：
+       事务内连续插入两条 (user_id, novel_id) 完全相同的记录
+       → **两条都成功**，COUNT = 2，然后 ROLLBACK
+       ⇒ 约束在功能上确实不存在，不只是元数据没看到。
+     ★ 教训：**假阳性判据** —— 光看一眼、"应该加了吧"、只搜关键词，
+       都会得出"已解决"的结论。唯一靠得住的是
+       **制造一个必定失败的场景，看它会不会失败**。
+
+     ★★ 更值钱的第二个教训（2026-10-10 补）：
+       核查时我给的判据本身写错了 —— 我写"期望 1"，
+       但 information_schema.statistics 是**一个索引的每列各占一行**，
+       两列的 UK 产生 **2 行**。实测 COUNT(*)=2，COUNT(DISTINCT index_name)=1。
+       ⇒ 按错判据验，**修好了也会被读成没修好**（假阴性）。
+       正确写法：COUNT(DISTINCT index_name) = 1
+       ⇒ 判据的两个方向都会骗你：假阳性让你以为修好了，
+         假阴性让你去"修"一个已经正确的东西。
+  ─────────────────────────────────────────────────────────
+
+  Repository 5 个方法全部写完：
+    ✅ findByUserIdAndNovelId(Integer, Integer)        复活逻辑用
+    ✅ findByIdAndUserId(Integer, Integer)             归属校验用（★ 不是 findById）
+    ✅ findByUserIdAndDeleted(Integer, Integer, Pageable)   recent_read / recent_add
+    ✅ findPageOrderByNovelUpdate(Integer, Pageable)   ★ 原生 SQL + countQuery
+    ✅ softDeleteByIds(List, Integer, LocalDateTime)   ★ 一次 UPDATE，天然免疫越权
+
+  ★ softDeleteByIds 参数顺序最终定为 (ids, userId, now)
+    —— 与设计文档 5.1 节一致，Controller 调用时不要再变。
+
+--------------------------------------------------------------------------------
+1.3 步骤 3：5 个接口全部完成（2026-10-10 复核）
+--------------------------------------------------------------------------------
+
+  【接口 1：POST /bookshelf】✅
+    · 校验 novel 存在（novelRepository.findById + orElseThrow）
+    · 查 (userId, novelId) 已有记录
+    · 三分支：不存在 → INSERT；deleted=0 → 幂等返回；deleted=1 → 复活
+    · 复活时 createTime 重置（★ 落实决策点 ②）
+    · @Transactional(rollbackFor = Exception.class) 已加
+    · log.info 已替换 System.out
+
+  【接口 2：GET /bookshelf】✅
+    · Controller：分页兜底 + 已删 @Valid + UserContext 取 userId
+    · Service：NOVEL_UPDATE 走原生 SQL，其余走 Sort
+    · buildSort 私有方法抽离，default 分支接住 RECENT_READ
+    · ★ BookshelfSortConverter 已写，@Component 已加（实测确认）
+    · ⚠ 查询方法未加 @Transactional(readOnly = true)（编码约定里有这一条）
+
+  【接口 3：PUT /bookshelf/{id}/top】✅
+    · 归属校验用 findByIdAndUserId ✅（不是 findById）
+    · top=false 时 topTime 清成 null ✅（落实设计文档 3.3 的 v2 补充）
+    · DTO 的 top 用 **Boolean**（设计文档 4.1 就是 Boolean）
+    · ⚠ 不过滤 deleted → 见问题 23
+
+  【接口 4：DELETE /bookshelf/{id}】✅
+    · 归属校验用 findByIdAndUserId ✅
+    · 幂等：重复移出不报错 ✅
+    · ★ 比设计更周全：额外清了 isTop / topTime / lastReadChapterId / lastReadTime
+      ⇒ 复活时是一张"干净"的记录，不会带回旧的置顶和阅读进度
+
+  【接口 5：POST /bookshelf/batch-remove】✅
+    · 用 softDeleteByIds 一次 UPDATE（WHERE 里带 userId，天然免疫越权）✅
+    · ids 上限 100（@NotEmpty + @Size(max=100)）✅
+    · 部分成功只记 log.info，不报错（符合设计"其余静默忽略"的意图）
+
+  ✅ 路径单复数已修：@RequestMapping("/bookshelf") 单数，与设计文档一致
+
+  ⚠ 仍缺：返回值是**实体 Bookshelf**，不是 BookshelfItemVO（步骤 3 尾巴）
+  ⚠ 仍缺：5 个接口 **0 个测试**
+
+
+################################################################################
+  二、8 个拍板点的落地情况（★ 一致性对账）
+################################################################################
+
+  ------------------------------------------------------------------
+  #  决策点                     最终采纳值            落地状态
+  ------------------------------------------------------------------
+  ①  索引数量                   2 KEY + 1 UK          ✅ 已落地（库里 4 个索引）
+  ②  复活时 create_time 是否重置 重置                  ✅ 已实现
+  ③  last_read_time=NULL 排前/后 排后                  ⏳ 待列表 VO 落地时验证
+  ④  "共 Y 章" 怎么算            批量 COUNT            ❌ 未做（接口 2 暂返实体）
+  ⑤  ChapterRepository 返回类型  接口投影              ❌ 未做
+  ⑥  Service 拿 userId           显式传参              ✅ 已实现
+  ⑦  定时任务                    5分 + SCAN + 幂等     ❌ 未做
+  ⑧  章节统计 SQL 合并还是分 2 条 合并 1 条             ❌ 未做
+  ------------------------------------------------------------------
+
+  ★ ② 是最容易漏的一条，第一版实现时确实漏了，已补。
+  ★ ① 走过的弯路值得记：
+      2026-10-08 实体里声明了 UK，但库里**没有**（问题 21）。
+      当时文档里勾了 ✅ —— 那是**假阳性**：声明 ≠ 落地。
+      2026-10-10 才真正补进库。
+      ⇒ 教训：这条勾 ✅ 的判据必须是"库里查得到"，不是"实体里写了"。
+
+
+################################################################################
+  三、★ 本轮踩过的坑（9 条，按发现顺序）
+################################################################################
+
+  ★ 全部是"能编译 / 能跑 / 但功能不生效或语义错"的类型 ——
+    和项目里以前那个 @RequestParam vs @PathVariable 是**同一个病**。
+
+  1. `@RequestBody @Valid Integer novelId` 不能直接反序列化成 Integer
+     → 请求体 {"novelId": 123} 是个对象，不是整数。必须建 DTO。
+
+  2. Controller 路径写了 /bookshelfs（复数），设计文档是 /bookshelf（单数）
+     → 项目现有 /users /novels /upload 混着单复数，**按设计文档来**。
+     ✅ 2026-10-10 已改：@RequestMapping("/bookshelf") 单数
+
+  3. Service 方法漏了 @Transactional
+     → 项目编码约定：所有写操作必须加。
+
+  4. System.out.println("已在书架中")
+     → 应改成 log.info，保持和现有服务类一致。
+
+  5. ★ 复活分支漏了 createTime 重置（决策点 ②）
+     → 后果：复活后按 create_time 排序会排最后，用户以为系统出 bug。
+
+  6. 书架列表第一版漏了 userId 过滤 → 会查出所有用户的书架（越权）
+  7. 书架列表第一版漏了 deleted=0 过滤 → 已移出的书也会出现
+
+  8. `@Valid` 加在 `@RequestParam Integer page` 上
+     → Integer 自己没有任何字段可校验，@Valid 什么也不做。
+       真正校验范围要用 @Validated + @Min/@Max。
+
+  9. ★★ Converter 忘加 @Component
+     → 编译通过、启动不报错，但 Spring 根本不知道它存在。
+       枚举转换还是走默认的 Enum.valueOf，大小写敏感、非法值 400。
+
+  10. ★★（2026-10-10）导出 schema.sql 用了 PowerShell 的 > 重定向
+     → **PowerShell 的 > / >> 默认写 UTF-16LE**，导出来的 .sql 是
+       UTF-16 + BOM + CRLF，MySQL 客户端一读就报：
+         "ASCII '\0' appeared in the statement, but this is not allowed
+          unless option --binary-mode is enabled"
+     → 后果：docker 首次建库执行失败 → app 撞 validate 起不来。
+     → 这个坑**最阴的地方是判据会骗你**：
+         grep -c "CREATE TABLE" 返回 **0**，看起来像"表根本没导进去"，
+         实际内容是完整的 4 张表，只是编码不对。
+       ⇒ **先 file 看编码，再看内容** —— 顺序反了会误诊。
+     → 根因：Windows PowerShell 5.1 的历史包袱，不是 UTF-8。
+     → 修法：用 mysqldump 的 --result-file=（让 dump 自己写文件），
+             或 PowerShell 里显式 Out-File -Encoding utf8。
+     ★ 三个回合的死法（拼接 → 缺表 → 编码），症状**一模一样**：
+       都是"down -v 之后 app 起不来"。见问题清单 问题 20。
+
+  ------------------------------------------------------------------
+  【★ 贯穿性发现：这类坑的共同特征】
+     · @PathVariable Integer 和 @RequestParam Integer 类型一样，编译器看不出
+     · @Valid 加在不该加的地方，不报错但也不生效
+     · @Component 忘加，整个类变成"死代码"
+     · @Transactional 加在私有方法上，AOP 代理看不到
+     · @RequireAdmin 加在 Service 上，拦截器看不到（项目已知问题）
+     · @Cacheable 绕开切面手写调用，CacheErrorHandler 失效（问题 0）
+     · ★ 唯一约束只在实体里声明、库里没有 —— 声明 ≠ 落地（问题 21）
+
+    共同特征：**编译通过、能跑、不报错，但语义错 / 完全不生效。**
+    应对方法：**每次写完先问一句"它怎么会被调用到？"**
+    验证方法：**制造一个必定失败的场景，看判据会不会报错** ——
+              这是项目"验证文化"第 3 条（假阳性判据比没有判据更危险）。
+  ------------------------------------------------------------------
+
+  ★ 已归档为面试题：docs/面试题库/02-工程实践与排错.txt Q9
+
+
+################################################################################
+  四、下一步
+################################################################################
+
+--------------------------------------------------------------------------------
+4.1 立即要做的（按设计文档实现顺序）
+--------------------------------------------------------------------------------
+  【0】★★ 先修唯一约束（问题 21）—— 排在所有接口前面
+       ① 查有没有重复数据（有的话加约束会直接失败）：
+            SELECT user_id, novel_id, COUNT(*) FROM bookshelf
+            GROUP BY user_id, novel_id HAVING COUNT(*) > 1;
+       ② ALTER TABLE bookshelf
+            ADD UNIQUE KEY uk_bookshelf_user_novel (user_id, novel_id);
+       ③ 重跑判据 1，期望 1；再做一次"插两条"的探针，期望**第二条报错**
+       ④ 补完重新 dump schema.sql（顺带解决问题 20 的缺表部分）
+       ★ 现在表里 0 行，是最省事的修复时机，越晚越麻烦
+
+  【A/B/C】✅ 接口 3、4、5 已完成（2026-10-10）
+       PUT /bookshelf/{id}/top · DELETE /bookshelf/{id}
+       · POST /bookshelf/batch-remove
+       实现要点全部落实：findByIdAndUserId 归属校验、top_time 清 null、
+       softDeleteByIds 一次 UPDATE、ids 上限 100
+       ⚠ 遗留：top/remove 不过滤 deleted（问题 23）
+
+  【D】★ 下一步就是跑验收（接口都齐了，但**一条都没验过**）
+       设计文档"十三、验证清单"里的 S2/S3/S4 越权测试必做。
+       ★ 现在的状态是"写完了"不是"验过了" —— 这两件事差很远。
+
+--------------------------------------------------------------------------------
+4.2 往后（步骤 3 尾部）
+--------------------------------------------------------------------------------
+  【E】返回值改 VO
+       当前接口 1、2 返回实体 Bookshelf，需要改成 BookshelfItemVO
+       需要先做：
+         · vo/BookshelfItemVO.java
+         · repository/NovelChapterStat.java     接口投影（COUNT 是 Long！）
+         · repository/ChapterBrief.java
+         · ChapterRepository 加两个批量查询
+         · Service 组装 3~4 次 SQL（不是 N+1）
+       坑：
+         · COUNT(c) 返回 Long，不是 Integer
+         · JPQL 别名必须和 getter 名严格对应
+
+  【F】三种排序的 EXPLAIN 实测（决策点 ① 的验收）
+       · Extra 出现 "Using filesort" = 索引没生效
+       · 设计文档说 novel_update 必然 filesort，接受
+
+--------------------------------------------------------------------------------
+4.3 步骤 4（readChapter 写 Redis 进度）
+--------------------------------------------------------------------------------
+  ✅ 完成（2026-10-10）
+    · readChapter 末尾加判空 + 调用 updateProgress
+      UserContextDTO current = UserContext.getUser();
+      if (current != null && current.getUserId() != null) { ... }
+      ★ 判空做对了 —— 这正是设计文档 3.5 说 v1 草案漏掉的坑
+    · IBookshelfService.updateProgress(userId, novelId, chapterId, chapterNumber)
+    · Redis: progress:{userId}:{novelId} Hash + expire 7 天
+    · updateProgress 内部 try-catch 降级 —— Redis 挂掉不影响阅读 ✅
+    · 依赖方向：NovelServiceIml → IBookshelfService，
+      而 BookshelfServiceIml 依赖的是 NovelRepository（不是 INovelService）
+      ⇒ **没有循环依赖** ✅
+    ⚠ readChapter 仍标着 @Transactional(readOnly = true) 却在写 Redis
+      —— 这是**既有问题**，本轮又加了一处写，语义问题更明显了
+    ⚠ 未跑回归：不带 token 读章节 → 期望 body.code=200
+
+--------------------------------------------------------------------------------
+4.4 步骤 5（定时任务刷回 DB）
+--------------------------------------------------------------------------------
+  ✅ 完成（2026-10-10）—— task/ProgressFlushTask.java
+
+  设计文档的三个坑全部避开：
+    ✅ fixedDelay 不用 fixedRate（防任务重叠）
+    ✅ SCAN 不用 KEYS（KEYS 会阻塞 Redis）
+    ✅ Cursor 用 try-with-resources（它占一条 Redis 连接）
+    ✅ 幂等版本号用 last_read_time，没用 update_time
+    ✅ Demo2Application 已加 @EnableScheduling
+
+  ★ 比设计多做的一处（值得记）：
+    "关闭 Cursor 后再做数据库更新，避免数据库异常被外层 catch 吞掉"
+    —— 设计文档没要求，是自己想到的 ✅
+
+  ⚠ 三个小问题（见问题清单，不阻塞）：
+
+  ① @Transactional 包住了整个 Redis 扫描（长事务）
+       @Transactional(rollbackFor = Exception.class)
+       public void flushProgress() {   ← 事务从这里开始，SCAN 也在里面
+           ... 扫描 + 逐条解析（可能几秒到几十秒）...
+           然后才做 DB 更新
+       }
+     · 扫描期间一直占着一条数据库连接
+     · 某一条 UPDATE 抛异常 → 整轮已刷过的全部回滚，log.info 也不执行
+     · ★ 原则：**事务只该包 DB 操作，不该包外部 IO**
+     · 设计文档的写法里**没有** @Transactional
+
+  ② 逐条 UPDATE，不是批量
+       设计文档写"批量 UPDATE"，实现是 for 循环逐条调用。
+       10 万个 key 就是 10 万次往返。
+       ★ 学习项目无所谓；真要批量要用 JdbcTemplate.batchUpdate。
+
+  ③ ZoneId.systemDefault() 和项目其他地方不一致
+       日榜用的是 ZoneId.of("Asia/Shanghai")（写死），这里用 systemDefault()。
+       prod 跑在 Docker 容器里，容器默认 TZ 通常是 UTC
+       ⇒ 存进 last_read_time 的时间比真实时间差 8 小时。
+       ★ 但**幂等不会因此出错** —— Redis 的 ts 是绝对时间戳，
+         转换和比较用同一套基准，链路自洽。
+         ⇒ 这是"显示不准"，不是"逻辑错"。
+
+  ★★ 幂等 SQL（写得很准，和设计文档一字不差，还多一道保险）：
+       UPDATE Bookshelf b SET b.lastReadChapterId = :chapterId,
+              b.lastReadTime = :readTime, b.updateTime = :now
+        WHERE b.userId = :userId AND b.novelId = :novelId AND b.deleted = 0
+          AND (b.lastReadTime IS NULL OR b.lastReadTime < :readTime)
+     · AND b.deleted = 0 是**自己加的**（设计文档没有）✅
+       ⇒ 已移出的书不会被写进度
+     · b.updateTime = :now 必须显式写 —— @Modifying 绕过 @PreUpdate
+
+
+################################################################################
+  五、待验证清单（做完要逐条过）
+################################################################################
+
+  【★ 唯一约束 —— ✅ 2026-10-10 已验证通过】
+  ✅ 判据 1：COUNT(DISTINCT index_name) 非 PRIMARY 的唯一索引 → 1
+            ★ 注意不能写 COUNT(*)：statistics 表一个索引每列占一行，
+              两列的 UK 会返回 2。我第一版判据就写错了（假阴性）。
+  ✅ 判据 2：事务内插两条相同 (user_id, novel_id) → 第二条报错
+  □ 判据 3：★ 故障演练 —— down -v && up --build，
+            看 app 容器起不起得来（现在会被问题 20 挡住）
+
+  【★ docker 建表脚本 —— 先修这个再谈部署】
+  □ file docker/mysql/init/01-schema.sql → 不能出现 UTF-16（现在是 UTF-16LE）
+  □ 转码/重导后：grep -c "CREATE TABLE" → 期望 4（UTF-16 时返回 0）
+
+  【步骤 1 相关】
+  □ PUT /novels/1 不传 author → body.code=200，库里 author = "佚名"
+  □ PUT /novels/1 传 author = "   " → body.code=200，库里 author = "佚名"
+
+  【接口 2 相关】
+  □ size=1000 → 最多返回 100 条
+  □ page=-1 → 按 page=1 处理
+  □ sort=recent_read → body.code=200
+  □ sort=RECENT_READ → body.code=200（大小写不敏感）
+  □ sort=foobar → body.code=200，按默认排序
+  □ ★ 把 BookshelfSortConverter 的 @Component 删掉重跑 → 期望 400
+    （这是"判据本身要验证"的第 3 条验证文化）
+
+  【越权（最要紧）】
+  □ 不带 token 调 5 个接口 → 全部 401
+  □ 用 A 的 token 调 PUT /bookshelf/B的id/top → B 的记录不被改
+  □ 用 A 的 token 调 DELETE /bookshelf/B的id → B 的记录还在
+  □ 用 A 的 token 批量移出 [A的id, B的id] → 只删掉 A 的
+
+  【★★ 步骤 4/5 —— 阅读进度（2026-10-10 新增，最要紧的一批）】
+  □ 回归：不带 token 读章节 → body.code=200
+             （游客 NPE 是 v1 草案漏的坑，已判空，但要验）
+  □ 带 token 读章节 → redis-cli KEYS "progress:*" 有 key
+                      HGETALL progress:{userId}:{novelId}
+                      → 期望 chapterId / chapterNumber / updateTime 三个字段齐全
+                      TTL 期望 7 天（TTL progress:{userId}:{novelId}）
+  □ 刷回：fixedDelay 临时改 10000 → 读 3 章 → 等一个周期
+          SELECT last_read_chapter_id, last_read_time FROM bookshelf
+           WHERE user_id=? AND novel_id=?
+          → 期望等于 Redis 里的值
+  □ ★★ 幂等验证（这一步最容易自欺欺人）：
+        不读书，等两个周期 → 期望那条记录的 update_time **不再变化**
+        日志期望：第二轮"扫描 N 条，更新 0 条"
+        ★"数据对了"和"没有重复写"是两件事，要分开验
+  □ ★ 新发现的 bug（问题 24）：
+        读到第 5 章 → 等一轮刷回 → 移出书架 → 重新加入 → 等一轮
+        → 期望 last_read_chapter_id = null（干净记录）
+        → 现在会变成原来的 chapterId（remove 清了 DB，但 Redis 的 key 还在）
+
+  【★ 软删记录的边界（问题 23，2026-10-10 新增）】
+  □ 移出一本 → 用它的 id 调 PUT /bookshelf/{id}/top
+    → 期望 body.code=500（或什么都不发生）；现在会 200 并把 is_top 设成 1
+  □ 紧接着重新加入这本书 → 期望它**不在**置顶位（列表第一条不是它）
+  □ {"top": 2} 之类的非法值 → 期望 body.code=500
+    （已改 Boolean，Jackson 会把 2 收成 true；此条验的是"不再存进 is_top=2"）
+
+  【性能】
+  □ 开 SQL 日志，书架列表 20 条 → SELECT 次数 ≤ 4
+  □ 本地响应时间 < 500ms
+
+  【判据 B】
+  □ ./mvnw test 连跑两遍全绿（本轮动过现有代码，必须重跑）
+
+
+################################################################################
+  六、遗留 / 记账
+################################################################################
+
+  【对账记录（2026-10-10 复核）】
+    · 问题 19（updateNovel 漏 author 兜底）→ ✅ **已修**
+      updateNovel 已含 isBlank 兜底分支，与 addNovel 一致。
+      ★ 库里 author 列仍**没有 DEFAULT**（Default=NULL），
+        所以这个兜底是必须的，不是可选防御。
+      ★ 接口层判据仍待跑（见第五节）。
+    · 问题 20（schema.sql）→ 🔴 **仍未解决，且换了个死法**
+      ① 拼接 → ✅ 已修
+      ② 缺 bookshelf → ✅ 已修（现在 4 张表齐全）
+      ③ ★ **编码变成 UTF-16LE** → ❌ 新问题，docker 建表会失败
+      根因：PowerShell 的 > 重定向默认写 UTF-16LE。
+    · 问题 21（唯一约束没进库）→ ✅ **已修**（uk_bookshelf_user_novel 已在库里）
+      ★ 顺带修正了我自己写错的判据（COUNT(*) vs COUNT(DISTINCT index_name)），
+        详见 1.2 节的"坑的历史记录"
+    · 问题 22（路径单复数）→ ✅ **已修**（/bookshelf 单数）
+    · 问题 23（软删记录能被置顶）→ ❌ 新发现，未修（见第五节判据）
+    · 问题 24（移出再重新加入，旧进度被写回来）→ ❌ 新发现，未修
+      核心矛盾：remove() 清了 DB 字段，但**没删 Redis 的 progress key**
+      ⇒ 定时任务在复活后把旧进度写回，等于"清空"被另一个组件撤销。
+      ★ 二选一：要么 remove 里删 key，要么 remove 里别清字段 —— 现在两件事同时做了，
+        效果互相抵消，而且表现依赖时序（7 天内/外不一样）。
+    · 步骤 4/5（阅读进度）→ ✅ **已完成**
+      readChapter 判空 ✅ / SCAN ✅ / fixedDelay ✅ / last_read_time 幂等 ✅
+      / @EnableScheduling ✅ / 幂等 SQL 还多加了 deleted=0 ✅
+    · BookshelfTopDTO.top 改 Boolean → ✅ 已修
+    · Converter 移到 config/ → ✅ 合理（它是 Spring 配置 bean）
+    · 我这轮给的 3 个点（top 过滤 deleted / Boolean / 测试）→ 修了 1 个
+
+  【技术债】
+    · 接口 1、2 目前返回实体 Bookshelf，不是 VO —— 步骤 3 尾部统一改
+    · 查询方法缺 @Transactional(readOnly = true)
+    · top()/remove() 不过滤 deleted（问题 23）
+    · 5 个接口 0 测试
+    · 单机锁 locks Map 只增不减（NovelServiceIml）—— 与本轮无关，记录在案
+    · dev 库是 update 模式"长出来的"，只存在硬盘 —— 长期方案 Flyway
+
+  【本轮不做（设计文档十一节）】
+    · 缓存（书架列表缓存、进度缓存）
+    · 分布式锁（定时任务多实例）
+    · 书籍分组/标签
+    · 多设备进度冲突合并
+    · 前端书架页
+    · 进度上报改 AOP 注解
+    · Flyway / Liquibase
+
+
+################################################################################
+  七、协作记录（老师模式）
+################################################################################
+
+  【本轮学习到的关键判断】
+    1. "三种排序走两条路" —— 排序列全在主表 → Sort；跨表 → 原生 SQL。
+       判断标准不是"哪种更优雅"，是"排序列落在哪张表"。
+    2. "显式传参 vs ThreadLocal" —— 显式传参让 Service 可单测，
+       直接关联到判据 A 的"Mockito 纯单测"。
+    3. "让数据库做安全检查" —— 归属校验写进 WHERE 子句
+       （findByIdAndUserId / softDeleteByIds 的 userId 条件），
+       比在 Java 里 if 判断更可靠。
+    4. "能编译不生效" —— 一类坑的共同特征，
+       验证方法：制造必失败场景，看判据会不会报错。
+    5. ★ "声明 ≠ 落地" —— 实体里写了约束，不等于库里有了。
+       ORM 的自动建表只管"新建表那一刻"，改已有表一律不补。
+
+  【待补的协作动作】
+    · 待修：唯一约束 uk_bookshelf_user_novel（问题 21）★ 最优先
+    · 待修：schema.sql 补 bookshelf 表（问题 20 残留）
+    · 待定：路径单复数二选一
+    · 待跑：接口 1 的验收（body.code=200 + 库里 author="佚名"）
+    · 待跑：接口 2 的越权验证（S2~S4）
+    · 待跑：./mvnw test 连跑两遍
+
+
+################################################################################
+  八、完成度记录（自己往后追加）
+################################################################################
+
+  日期        变动                                    完成度
+  ------------------------------------------------------------------
+  2026-10-08  步骤 1（author）完成                     步骤 1/5
+  2026-10-08  步骤 2（实体 + Repository）完成          步骤 2/5
+              ⚠ 唯一约束未落地
+  2026-10-08  步骤 3 接口 1、2 完成                    步骤 3 的 2/5 接口
+  2026-10-10  步骤 3 接口 3、4、5 完成                 ★ 步骤 3 的 5/5 接口
+  2026-10-10  唯一约束补进库（问题 21 关闭）
+  2026-10-10  路径改单数 /bookshelf（问题 22 关闭）
+  2026-10-10  top DTO 改 Boolean
+  2026-10-10  Converter 移到 config/
+  2026-10-10  schema.sql 编码变 UTF-16（问题 20 换死法）
+  2026-10-10  步骤 4（readChapter 写 Redis 进度）完成    ★ 步骤 4/5
+  2026-10-10  步骤 5（ProgressFlushTask 定时刷回）完成    ★ 5 步全部走完
+  2026-10-10  发现 remove 没删 Redis 进度 key（问题 24）
+  ------------------------------------------------------------------
+  ________    ______________________________________  ________
+
+================================================================================
+                              文件结束
+================================================================================

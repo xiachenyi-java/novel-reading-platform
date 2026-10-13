@@ -6,7 +6,7 @@ import com.example2.demo2.dto.ChapterDTO;
 import com.example2.demo2.dto.NovelDTO;
 import com.example2.demo2.entity.Chapter;
 import com.example2.demo2.entity.Novel;
-import com.example2.demo2.service.INovelService;
+import com.example2.demo2.service.Iservice.INovelService;
 import com.example2.demo2.vo.NovelDetailVO;
 import com.example2.demo2.vo.NovelRankVO;
 import io.swagger.v3.oas.annotations.Operation;

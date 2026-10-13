@@ -1,0 +1,323 @@
+================================================================================
+              项目说明 · 参考附录（查表用，日常不用读）
+                          小说管理系统
+                    整理日期：2026-10-11
+================================================================================
+
+【这份文件是什么】
+  《docs/项目说明-给AI.txt》的参考附录，2026-10-11 从正文拆出。
+  ★ 拆出理由：下面四份表是"查的时候才要"的字典，日常对话用不上，
+    但原本占了正文 1/3 篇幅 —— 正文每次被读进上下文都要付费。
+  ★ 这是**搬家不是删除**：内容一字没丢，只是不住在同一间屋子了。
+
+【什么时候读这份】
+  附 A  目录结构         不知道某个类 / 组件在哪
+  附 B  数据模型         要改表、加字段、改索引
+  附 C  接口清单         要加接口、核对路径与权限
+  附 D  Redis Key 全景   要动缓存、动 Redis key
+
+  ★ 日常开工只读正文（项目说明-给AI.txt），这份按需查。
+  ★ 本文件内容都是"现在是什么样"（硬事实），改代码前核对用。
+
+
+################################################################################
+  附 A、目录结构
+################################################################################
+
+  后端（src/main/java/com/example2/demo2/，实测 48 个类）
+
+  ├── Demo2Application.java            启动类（★ 已加 @EnableScheduling，定时任务要用）
+  │
+  ├── common/                          横切关注点
+  │   ├── Result.java                  ★ 统一响应 {code, msg, data}
+  │   ├── GlobalExceptionHandler.java  ★ 全局异常处理（★ 无 @ResponseStatus，
+  │   │                                  所以 RuntimeException 也返回 HTTP 200）
+  │   ├── JwtUtil.java                 JWT 生成/解析
+  │   ├── UserContext.java             ★ ThreadLocal 存当前用户（游客时是 null）
+  │   ├── RateLimitAspect.java         @RateLimit 切面
+  │   ├── annotation/
+  │   │   ├── RateLimit.java           限流注解（key/limit/window）
+  │   │   └── RequireAdmin.java        管理员权限注解（★ 只能加在 Controller 上）
+  │   └── exception/
+  │       ├── BusinessException.java   业务异常（warn 级别）
+  │       └── RateLimitException.java  限流异常（返回 429）
+  │
+  ├── enums/
+  │   └── BookshelfSort.java           RECENT_READ / RECENT_ADD / NOVEL_UPDATE
+  │
+  ├── config/
+  │   ├── LoginInterceptor.java        ★★ 认证/鉴权核心（三态设计，见决策 8）
+  │   ├── CacheConfig.java             ★ RedisCacheManager + CacheErrorHandler
+  │   │                                  （★ JacksonConfig 已删除，见问题清单 11）
+  │   ├── WebConfig.java               注册拦截器 + /uploads 静态映射
+  │   ├── CorsConfig.java              只允许 localhost:5173
+  │   ├── SecurityConfig.java          BCrypt Bean + 放行所有请求
+  │   └── BookshelfSortConverter.java  ★ 2026-10-10 从 common/ 移到 config/
+  │                                      sort 参数大小写不敏感 + 非法值兜底
+  │                                      ★ 忘加 @Component 就整类失效（已加）
+  │                                      ★ 它是 Spring 配置 bean，放 config/ 更合理
+  │
+  ├── controller/
+  │   ├── NovelController.java         ★ 小说 + 章节的所有接口
+  │   ├── BookshelfController.java     ★ @RequestMapping("/bookshelf") 单数，5 个接口
+  │   ├── UserController.java          注册/登录/登出/刷新
+  │   └── FileController.java          封面上传
+  │
+  ├── service/
+  │   ├── NovelServiceIml.java         ★ 小说服务实现（核心业务，含缓存三件套）
+  │   │                                  ★ readChapter 里调 IBookshelfService.updateProgress
+  │   │                                    （★★ 必须判空 —— readChapter 是游客接口）
+  │   ├── INovelService.java           ★ 小说服务接口
+  │   ├── BookshelfServiceIml.java     ★ 5 个接口 + updateProgress
+  │   ├── IBookshelfService.java       ★ 书架服务接口
+  │   └── UserService.java             认证逻辑
+  │
+  ├── task/
+  │   └── ProgressFlushTask.java       ★ 每 5 分钟把 Redis 进度刷回 DB
+  │                                      @Scheduled(fixedDelay) + SCAN + 幂等
+  │
+  ├── repository/
+  │   ├── NovelRepository.java         ★ JpaRepository + JpaSpecificationExecutor
+  │   ├── NovelSpecifications.java     ★ 动态查询条件构造器
+  │   ├── BookshelfRepository.java     ★ 5 个方法：
+  │   │                                  findByUserIdAndNovelId / findByIdAndUserId
+  │   │                                  / findByUserIdAndDeleted
+  │   │                                  / findPageOrderByNovelUpdate（原生 SQL）
+  │   │                                  / softDeleteByIds（批量软删，防越权）
+  │   ├── ChapterRepository.java       findByNovelIdOrderByChapterNumberAsc 等
+  │   └── UserRepository.java          findByUsername
+  │
+  ├── entity/
+  │   ├── Novel.java                   ★ 带 @Table(indexes=...) 声明索引
+  │   ├── Chapter.java                 ★ 带 @Table(indexes=...) 声明索引
+  │   ├── Bookshelf.java               ★ 2 个 @Index + 1 个 @UniqueConstraint
+  │   └── User.java                    id / username / passwordHash / role
+  │
+  ├── dto/                             入参（带校验注解）
+  │   ├── NovelDTO                     title/summary/category 是 @NotBlank
+  │   │                                  ★ author 和 coverUrl **故意不加** @NotBlank
+  │   │                                    （加了会让 NovelServiceTest.testAdd 挂掉）
+  │   ├── BookshelfAddDTO              ★ novelId @NotNull
+  │   │                                  ★ 必须建 DTO 的原因：@RequestBody 不能
+  │   │                                    直接反序列化成 Integer（请求体是对象）
+  │   ├── BookshelfTopDTO              ★ top 用 **Boolean**（不是 Integer）
+  │   │                                  ★ 用 Integer 的话传 top=2 会存进库 is_top=2，
+  │   │                                    两个 if 分支都不进
+  │   ├── BookshelfBatchDeleteDTO      ★ ids：@NotEmpty + @Size(max=100)
+  │   ├── UserContextDTO               放 ThreadLocal 的用户信息
+  │   └── LoginDTO / UserRegisterDTO / RefreshTokenDTO / ChapterDTO
+  │
+  └── vo/                              出参
+      ├── NovelDetailVO                详情 + 章节目录（★ 不带正文）
+      ├── NovelRankVO                  排行榜条目
+      └── LoginVO                      token / refreshToken / userInfo
+
+  前端（novel-frontend/，实测 16 个 .vue）
+  ├── src/api/index.js                 ★ axios 实例（自动带 Token，401 跳登录）
+  ├── src/api/novel.js                 列表/详情/章节CRUD/上传/排行榜
+  ├── src/api/bookshelf.js             ★ 书架 5 个接口 + 阅读进度
+  ├── src/api/user.js                  登录/注册
+  ├── src/router/index.js              8 条路由，/shelf 和 /write 需登录
+  ├── src/App.vue
+  ├── src/components/                  SiteFooter / StaticPageLayout
+  └── src/views/
+      ├── NovelListView.vue            ★ 书城首页（服务端分页+搜索+分类）
+      ├── NovelDetailView.vue          详情 + 目录 + 管理员操作
+      ├── ChapterReadView.vue          阅读器 + 上下章
+      ├── MyShelf.vue                  ★ 书架页（668 行，已接 api/bookshelf.js）
+      ├── RankingView.vue              排行榜（总榜/日榜）
+      ├── WriteNovel.vue               发布小说
+      ├── LoginView.vue / RegisterView.vue
+      └── static/                      About / Contact / Feedback / Privacy / Terms
+
+
+################################################################################
+  附 B、数据模型
+################################################################################
+
+  user
+    id            INT PK AUTO_INCREMENT
+    username      VARCHAR(255) NOT NULL UNIQUE
+    password_hash VARCHAR(60)  NOT NULL        BCrypt
+    role          VARCHAR(255) NOT NULL        默认 "USER"，管理员是 "ADMIN"
+
+  novel
+    id               INT PK AUTO_INCREMENT
+    title            VARCHAR(255) NOT NULL
+    author           VARCHAR(100) NOT NULL
+                     ★★ 注意：库里**没有 DEFAULT '佚名'**（SHOW COLUMNS 实测 Default=NULL）
+                        ⇒ 兜底只能靠 Service 层，见问题清单 19
+    summary          VARCHAR(2000)
+    cover_url        VARCHAR(255)
+    category         VARCHAR(255) NOT NULL     自由文本，不是枚举
+    status           VARCHAR(255) NOT NULL     "ONGOING" / "FINISHED"
+    total_words      INT                       冗余字段（见正文决策 2）
+    last_update_time DATETIME(6) NOT NULL      @PrePersist / @PreUpdate 自动维护
+    索引：PRIMARY(id)
+          idx_novel_last_update_time (last_update_time)
+          idx_novel_category_last_update_time (category, last_update_time)
+
+  chapter
+    id             INT PK AUTO_INCREMENT
+    novel_id       INT NOT NULL                手动关联，无外键约束
+    chapter_number INT NOT NULL
+    title          VARCHAR(255) NOT NULL
+    content        LONGTEXT NOT NULL           正文，详情接口不返回
+    word_count     INT NOT NULL
+    create_time    DATETIME(6) NOT NULL        @PrePersist 自动填
+    索引：PRIMARY(id)
+          idx_chapter_novel_number (novel_id, chapter_number)
+
+  bookshelf（软删除 + 置顶排序）
+    id                   INT PK AUTO_INCREMENT
+    user_id              INT NOT NULL
+    novel_id             INT NOT NULL          手动关联，无外键约束
+    last_read_chapter_id INT 可空              最后阅读进度
+    last_read_time       DATETIME(6) 可空      最后阅读时间
+    is_top               INT NOT NULL 默认 0    置顶标记
+    top_time             DATETIME(6) 可空      置顶时间
+    create_time          DATETIME(6) NOT NULL  @PrePersist 自动填
+    update_time          DATETIME(6) NOT NULL  @PrePersist / @PreUpdate 自动维护
+    deleted              INT NOT NULL 默认 0    软删除标记（移出书架不删行）
+    索引：PRIMARY(id)
+          uk_bookshelf_user_novel  (user_id, novel_id)          UNIQUE ★
+          idx_bookshelf_top_create (user_id, deleted, is_top, top_time, create_time)
+          idx_bookshelf_top_read   (user_id, deleted, is_top, top_time, last_read_time)
+    ★ 唯一约束 2026-10-10 已补进库（原问题 21 已解决）
+    ★ 共 4 个索引（PRIMARY + 1 UK + 2 KEY），与设计文档 1.1 节一致
+
+  ★ 时间字段用 @PrePersist / @PreUpdate 自动维护，
+    不要在 Service 里手写 setCreateTime(LocalDateTime.now())
+
+  ★★ 表结构改动是"三处同步"，少一处就出事（详见正文 §六 常见任务入口）：
+     实体类 / dev 库（ddl-auto=update 自动）/ docker 的 01-schema.sql（手工 dump）
+
+
+################################################################################
+  附 C、接口清单（共 21 个）
+################################################################################
+
+  【用户模块 /users】
+  ------------------------------------------------------------------
+  方法   路径              权限    限流          说明
+  ------------------------------------------------------------------
+  POST   /users/register   公开    5次/60秒/IP   注册
+  POST   /users/login      公开    5次/60秒/IP   登录，返回双 Token
+  POST   /users/logout     需登录  —             登出（拉黑 token）
+  POST   /users/refresh    公开    —             用 refreshToken 换新 token
+  ------------------------------------------------------------------
+
+  【小说模块 /novels】
+  ------------------------------------------------------------------
+  方法   路径                              权限    说明
+  ------------------------------------------------------------------
+  POST   /novels                           管理员  创建小说
+  PUT    /novels/{id}                      管理员  修改小说
+  DELETE /novels/{id}                      管理员  删除小说（级联删章节）
+  POST   /novels/{novelId}/chapters        管理员  发布章节
+  PUT    /novels/{novelId}/chapters/{cid}  管理员  修改章节
+  DELETE /novels/{novelId}/chapters/{cid}  管理员  删除章节（含章节号重排）
+  GET    /novels                           游客    列表
+                                                  参数 page/size/category/
+                                                       status/keyword（后三可选）
+  GET    /novels/categories                游客    获取全部分类（DISTINCT）
+  GET    /novels/{id}                      游客    详情 + 章节目录
+  GET    /novels/{novelId}/chapters/{cid}  游客    阅读章节（会加热度 + 记进度）
+  GET    /novels/ranking                   游客    排行榜（top + type=total|daily）
+  ------------------------------------------------------------------
+
+  【文件模块 /upload】
+  ------------------------------------------------------------------
+  POST   /upload                           需登录  上传封面图
+  ------------------------------------------------------------------
+
+  【书架模块 /bookshelf】（★ 路径是**单数**，原问题 22 已修）
+  ------------------------------------------------------------------
+  方法   路径                        权限    说明
+  ------------------------------------------------------------------
+  POST   /bookshelf                 需登录  加入书架（三分支：新建 / 幂等返回 /
+                                            复活 deleted=1 的旧记录）
+  GET    /bookshelf                 需登录  书架列表
+                                            参数 page/size/sort
+                                            sort = RECENT_READ（默认）|
+                                                   RECENT_ADD | NOVEL_UPDATE
+                                            ★ 大小写不敏感，非法值兜底为默认
+  PUT    /bookshelf/{id}/top        需登录  置顶 / 取消置顶（显式传值，非 toggle）
+                                            Body: {"top": true|false}
+                                            取消时 top_time 清成 null
+  DELETE /bookshelf/{id}            需登录  移出一本（软删 deleted=1）
+                                            同时清 is_top / top_time / 阅读进度
+  POST   /bookshelf/batch-remove    需登录  批量移出
+                                            Body: {"ids":[1,2,3]}，上限 100
+                                            ★ 用 POST 不是 DELETE（带 body 且防越权）
+  ------------------------------------------------------------------
+  ★ 返回值目前是**实体 Bookshelf**，不是 VO（见项目笔记/14 步骤 3 尾巴）
+
+  【统一响应格式】
+    { "code": 200, "msg": "success", "data": ... }
+    · code 200 = 成功，500 = 业务/系统异常
+    · ★★ 业务异常返回 HTTP 200 + body code 500（团队约定，非标准 RESTful）
+      ⇒ **判断成败必须看 body 的 code 字段，不能看 HTTP 状态码**
+    · 401 / 403 / 429 会同时设置对应的 HTTP 状态码
+
+
+################################################################################
+  附 D、Redis Key 全景
+################################################################################
+
+  ------------------------------------------------------------------
+  Key                            类型      TTL      用途
+  ------------------------------------------------------------------
+  refresh_token:{uuid}           String    7天      refreshToken → userId
+  user_refresh:{userId}          String    7天      userId → refreshToken
+  blacklist:user:{userId}        Hash      无★      field=token, value=过期时间戳
+  user:info:{userId}             String    30分     用户信息缓存
+  rate_limit:{key}:{ip}          String    window秒 限流计数
+  ranking:novel:total            ZSET      无       总榜热度
+  ranking:novel:day:{yyyyMMdd}   ZSET      2天      日榜热度
+  progress:{userId}:{novelId}    Hash      7天      阅读进度
+                                                    field: chapterId /
+                                                           chapterNumber /
+                                                           updateTime(毫秒)
+  ------------------------------------------------------------------
+  ★ blacklist 整个 Hash key 没有兜底 TTL，用户登出后不再访问就永久驻留
+
+  【progress:* 的设计（write-behind 写回模式）】
+    · 写入：NovelServiceIml.readChapter → IBookshelfService.updateProgress
+            ★ readChapter 是**游客接口**，UserContext 匿名时是 null，必须判空
+    · 刷回：task/ProgressFlushTask，@Scheduled(fixedDelay = 300000)
+            SCAN（不是 KEYS）+ Cursor try-with-resources
+            + WHERE (lastReadTime IS NULL OR lastReadTime < :readTime) 幂等
+    · 为什么先写 Redis 不写 DB：快速翻页会打 10+ 次 UPDATE
+    · ⚠ 移出书架时**没有删这个 key** → 见问题 24
+
+  【Spring Cache 用的 key】（两个缓存区）
+    ------------------------------------------------------------------
+    缓存区          实际 key 形如              TTL       用途
+    ------------------------------------------------------------------
+    novel           novel::{novelId}          30 分钟   小说详情缓存
+    novel-null      novel-null::{novelId}     5 分钟    防穿透：存"查过
+                                                        但不存在的"标记
+    ------------------------------------------------------------------
+    ★ findDetail 现在用手动 cacheManager 调用读写这两个区，不再用 @Cacheable
+      —— 这曾打掉缓存降级，见正文决策 7。
+
+  【@CacheEvict 的规律 ★ 重要】
+    凡是会改变 NovelDetailVO 里字段的方法，都必须加 @CacheEvict(value="novel", ...)
+    NovelDetailVO 包含：id/title/summary/coverUrl/category/status/
+                        totalWords/lastUpdateTime/chapters
+
+    当前已加：
+      addChapter      key = "#novelId"    （改了 totalWords 和章节列表）
+      updateChapter   key = "#novelId"
+      deleteChapter   key = "#novelId"
+      deleteNovel     key = "#id"
+      updateNovel     key = "#id"
+
+    ★ 自查方法：写完 key = "#xxx"，回头看方法签名里有没有这个参数名。
+      对不上就会 evict 一个不存在的 key，真正的缓存纹丝不动。
+
+
+================================================================================
+                              文件结束
+================================================================================

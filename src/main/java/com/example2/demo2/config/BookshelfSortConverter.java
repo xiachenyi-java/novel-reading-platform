@@ -16,11 +16,15 @@ public class BookshelfSortConverter implements Converter<String, BookshelfSort> 
 
     @Override
     public BookshelfSort convert(String source){
+
+        //空值判断
         if (source == null || source.isBlank()){
             return BookshelfSort.RECENT_READ;
         }
 
+        //格式转化
         String normalized  = source.trim().toUpperCase(Locale.ROOT);
+
         try {
             return BookshelfSort.valueOf(normalized);
         }catch (IllegalArgumentException ex){
