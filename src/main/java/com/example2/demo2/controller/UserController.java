@@ -7,7 +7,7 @@ import com.example2.demo2.dto.LoginDTO;
 import com.example2.demo2.dto.RefreshTokenDTO;
 import com.example2.demo2.dto.UserRegisterDTO;
 import com.example2.demo2.entity.User;
-import com.example2.demo2.service.UserService;
+import com.example2.demo2.service.Iservice.IUserService;
 import com.example2.demo2.vo.LoginVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -16,13 +16,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.concurrent.TimeUnit;
 
 /**
  * 夏辰义
@@ -34,15 +31,14 @@ import java.util.concurrent.TimeUnit;
 @Tag(name = "用户管理")
 @Slf4j
 public class UserController {
-    private final UserService userService;
 
-    private final StringRedisTemplate stringRedisTemplate;
+    private final IUserService iUserService;
 
     @Operation(summary = "用户注册")
     @RateLimit(key = "register", limit = 5, window = 60)
     @PostMapping("/register")
     public Result<User> register(@RequestBody @Valid UserRegisterDTO dto) {
-        return Result.success(userService.register(dto));
+        return Result.success(iUserService.register(dto));
     }
 
     @Operation(summary = "用户登陆")
@@ -50,7 +46,7 @@ public class UserController {
     @PostMapping("/login")
     public Result<LoginVO> login(@RequestBody LoginDTO loginDTO, HttpServletRequest request) {
 
-        return Result.success(userService.login(loginDTO));
+        return Result.success(iUserService.login(loginDTO));
     }
 
     @Operation(
@@ -63,19 +59,9 @@ public class UserController {
         if (token != null && token.startsWith("Bearer ")) {
             token = token.substring(7);
         }
-        log.info("用户登出: userId={}", UserContext.getUser().getUserId());
-        //获取用户id
+
         Integer userId = UserContext.getUser().getUserId();
-        //用反向索引，找到刷新令牌
-        String refreshToken = stringRedisTemplate.opsForValue().get("user_refresh:" + userId);
-        //如果找到了，把两份索引都删掉
-        if (refreshToken != null) {
-            stringRedisTemplate.delete("refresh_token:" + refreshToken);  // 删正向
-            stringRedisTemplate.delete("user_refresh:" + userId);         // 删反向
-        }
-        String key = "blacklist:user:" + userId;
-        long expireTime = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(120);
-        stringRedisTemplate.opsForHash().put(key, token, String.valueOf(expireTime));
+        iUserService.logout(userId, token);
 
         return Result.success();
     }
@@ -83,6 +69,6 @@ public class UserController {
     @Operation(summary = "刷新令牌")
     @PostMapping("/refresh")
     public Result<LoginVO> refresh(@RequestBody @Valid RefreshTokenDTO dto) {
-        return Result.success(userService.refresh(dto.getRefreshToken()));
+        return Result.success(iUserService.refresh(dto.getRefreshToken()));
     }
 }

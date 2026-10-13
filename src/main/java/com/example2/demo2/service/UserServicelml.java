@@ -8,6 +8,7 @@ import com.example2.demo2.dto.UserContextDTO;
 import com.example2.demo2.dto.UserRegisterDTO;
 import com.example2.demo2.entity.User;
 import com.example2.demo2.repository.UserRepository;
+import com.example2.demo2.service.Iservice.IUserService;
 import com.example2.demo2.vo.LoginVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,7 +28,7 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class UserService {
+public class UserServicelml implements IUserService {
 
     private final UserRepository userRepository;
     private final BCryptPasswordEncoder bCryptPasswordEncoder;
@@ -35,26 +36,9 @@ public class UserService {
     private final ObjectMapper objectMapper;
     private final StringRedisTemplate stringRedisTemplate;
 
-    // ========== 1. 注册 ==========
-    public User register(UserRegisterDTO dto) {
-        if (userRepository.findByUsername(dto.getUsername()).isPresent()) {
-            throw new BusinessException("用户名已存在");
-        }
-        log.info("注册用户: username={}", dto.getUsername());
 
-        // 创建实体
-        User user = new User();
-        user.setRole("USER");
-        user.setUsername(dto.getUsername());
-
-        // 密码加密存储
-        String hashed = bCryptPasswordEncoder.encode(dto.getPassword());
-        user.setPasswordHash(hashed);
-
-        return userRepository.save(user);
-    }
-
-    // ========== 2. 登录 ==========
+    // ========== 1. 登录 ==========
+    @Override
     public LoginVO login(LoginDTO dto) {
         // 账号是否存在
         User user = userRepository.findByUsername(dto.getUsername())
@@ -96,7 +80,28 @@ public class UserService {
         return loginVO;
     }
 
+    // ========== 2. 注册 ==========
+    @Override
+    public User register(UserRegisterDTO dto) {
+        if (userRepository.findByUsername(dto.getUsername()).isPresent()) {
+            throw new BusinessException("用户名已存在");
+        }
+        log.info("注册用户: username={}", dto.getUsername());
+
+        // 创建实体
+        User user = new User();
+        user.setRole("USER");
+        user.setUsername(dto.getUsername());
+
+        // 密码加密存储
+        String hashed = bCryptPasswordEncoder.encode(dto.getPassword());
+        user.setPasswordHash(hashed);
+
+        return userRepository.save(user);
+    }
+
     // ========== 3. 获取当前用户 ==========
+    @Override
     public User getCurrentUser() {
         // 1. 获取 ThreadLocal 中的用户
         UserContextDTO user = UserContext.getUser();
@@ -138,6 +143,7 @@ public class UserService {
     }
 
     // ========== 4. 刷新令牌 ==========
+    @Override
     public LoginVO refresh(String refreshToken) {
         // 1. 用正向索引查是哪个用户
         String userIdStr = stringRedisTemplate.opsForValue().get("refresh_token:" + refreshToken);
@@ -182,5 +188,32 @@ public class UserService {
         vo.setUserInfo(user);
 
         return vo;
+    }
+
+    // ========== 5. 登出   ==========
+    @Override
+    public void logout(Integer userId, String accessToken) {
+        log.info("用户登出: userId={}", userId);
+
+        //删除刷新令牌正反向索引
+        String refreshToken = stringRedisTemplate.opsForValue()
+                .get("user_refresh:" + userId);
+
+        if (refreshToken != null) {
+            stringRedisTemplate.delete("refresh_token:" + refreshToken);
+            stringRedisTemplate.delete("user_refresh:" + userId);
+        }
+
+        //  access token 加入黑名单
+        if (accessToken != null && !accessToken.isBlank()) {
+            String key = "blacklist:user:" + userId;
+            long expireTime = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(120);
+
+            stringRedisTemplate.opsForHash()
+                    .put(key, accessToken, String.valueOf(expireTime));
+
+            // 建议给整个 key 设置过期时间，避免黑名单 key 永不过期
+            stringRedisTemplate.expire(key, 120, TimeUnit.MINUTES);
+        }
     }
 }

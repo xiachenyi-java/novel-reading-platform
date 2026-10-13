@@ -60,18 +60,10 @@ public class LoginInterceptor implements HandlerInterceptor {
                 try {
                     Claims claims = jwtUtil.parseToken(token);
                     Integer userId = Integer.valueOf(claims.getSubject());
-                    String hashKey = "blacklist:user:" + userId;
-                    Object expireObj = stringRedisTemplate.opsForHash().get(hashKey, token);
 
-                    boolean shouldSetContext = true;  // 默认视为合法登录用户
-                    if (expireObj != null) {
-                        long expireAt = Long.parseLong(expireObj.toString());
-                        if (expireAt >= System.currentTimeMillis()) {
-                            shouldSetContext = false;
-                        } else if (expireAt < System.currentTimeMillis()) {
-                            stringRedisTemplate.opsForHash().delete(hashKey, token);  // 惰性删除
-                        }
-                    }
+                    boolean shouldSetContext = !isBlacklisted(userId, token);
+                    ;  // 查黑名单判断是否为合法用户
+
                     if (shouldSetContext) {
                         UserContextDTO dto = new UserContextDTO();
                         dto.setUsername(jwtUtil.getUsernameFromToken(token));
@@ -105,29 +97,10 @@ public class LoginInterceptor implements HandlerInterceptor {
 
             // 查黑名单
             Integer userId = Integer.valueOf(claims.getSubject());
-            String hashKey = "blacklist:user:" + userId;
-            Object expireObj = null;
-            try {
-                expireObj = stringRedisTemplate.opsForHash().get(hashKey, token);
-            } catch (Exception e) {
-                // Redis 故障时降级：跳过黑名单检查，不影响正常请求
-                log.warn("缓存读取失败，userid={}", userId, e);
-            }
 
-            if (expireObj != null) {
-                long expireAt = Long.parseLong(expireObj.toString());
-                if (expireAt > System.currentTimeMillis()) {
-                    // 在黑名单里，拦截
-                    writeUnauthorized(response);
-                    return false;
-                } else {
-                    // 已过期，删除后放行
-                    try {
-                        stringRedisTemplate.opsForHash().delete(hashKey, token);
-                    } catch (Exception e) {
-                        log.warn("缓存删除失败，userid={}", userId, e);
-                    }
-                }
+            if (isBlacklisted(userId, token)) {
+                writeUnauthorized(response);
+                return false;
             }
 
             // 设置 ThreadLocal
@@ -169,11 +142,49 @@ public class LoginInterceptor implements HandlerInterceptor {
         response.getWriter().flush();
     }
 
+    //结束后执行
     @Override
     public void afterCompletion(HttpServletRequest request,
                                 HttpServletResponse response, Object handler, Exception ex)
             throws Exception {
         // 清理 ThreadLocal，防止线程池复用导致用户串号
         UserContext.remove();
+    }
+
+
+    //判断 token 是否仍在有效黑名单中。
+    //顺带清理已过期的黑名单记录（惰性删除）。
+    private boolean isBlacklisted(Integer userId, String token) {
+        //拼key
+        String hashKey = "blacklist:user:" + userId;
+
+        //查黑名单
+        Object expireObj = null;
+        try {
+            expireObj = stringRedisTemplate.opsForHash().get(hashKey, token);
+        } catch (Exception e) {
+            log.warn("黑名单查询失败，userId={}", userId, e);
+        }
+
+        //不存在
+        if (expireObj == null) {
+            return false;
+        }
+
+        //解析过期时间
+        long expireAt = Long.parseLong(expireObj.toString());
+
+        //边界判断
+        if (expireAt >= System.currentTimeMillis()) {
+            return true;//仍在黑名单
+        }
+
+        //不在黑名单，惰性删除
+        try {
+            stringRedisTemplate.opsForHash().delete(hashKey, token);
+        } catch (Exception e) {
+            log.warn("黑名单删除失败，userId={}", userId, e);
+        }
+        return false;
     }
 }
