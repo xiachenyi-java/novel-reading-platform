@@ -119,7 +119,7 @@
       ├── NovelRankVO                  排行榜条目
       └── LoginVO                      token / refreshToken / userInfo
 
-  前端（novel-frontend/，实测 16 个 .vue + 2 个组合式函数）
+  前端（novel-frontend/，实测 17 个 .vue + 2 个组合式函数）
   ├── src/api/index.js                 ★ axios 实例（自动带 Token，401 跳登录）
   ├── src/api/novel.js                 列表/详情/章节CRUD/上传/排行榜
   ├── src/api/bookshelf.js             ★ 书架 5 个接口 + 阅读进度
@@ -130,7 +130,12 @@
   │   └── usePagination.js             分页状态复用（MyShelf.vue 在用）
   ├── src/router/index.js              13 条路由，/shelf 和 /write 需登录
   ├── src/App.vue
-  ├── src/components/                  SiteFooter / StaticPageLayout
+  ├── src/styles/tokens.css            ★ 设计变量（2026-10-14 新增）
+  │                                     颜色/字号/间距/圆角/阴影，全站唯一定义处；
+  │                                     页面里统一写 var(--brand) 这类变量名，不再硬编码色值
+  ├── src/components/                  SiteHeader / SiteFooter / StaticPageLayout
+  │                                    ★ SiteHeader = 全站统一顶部导航（2026-10-14 新增）
+  │                                      ⚠ 目前只有 NovelListView 接上了，其余 8 个页面待接
   └── src/views/
       ├── NovelListView.vue            ★ 书城首页（服务端分页+搜索+分类）
       ├── NovelDetailView.vue          详情 + 目录 + 管理员操作

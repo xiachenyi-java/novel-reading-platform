@@ -13,7 +13,9 @@
                   UserService → UserServiceIml（统一 Iml 后缀）
         前端新增：登录页 + 静态页（关于/联系/条款/隐私/反馈）
                   + composables/（useAuth / usePagination）
-        规模 49 类 / 2806 行 / 21 个 REST 接口 / 16 个 .vue
+                  + styles/tokens.css 设计变量 + SiteHeader 公共导航
+                    ⚠ SiteHeader 目前只接了首页，其余 8 个页面待接
+        规模 49 类 / 2806 行 / 21 个 REST 接口 / 17 个 .vue
 
   活跃：🟡 23  top/remove 不过滤 deleted —— 软删记录还能被置顶
         🟡 24  remove() 没删 Redis 的 progress:* —— 复活后旧进度被写回
@@ -27,9 +29,7 @@
         2. 跑 docker 故障演练（问题 20 已清，不再挡这一步）
         3. 跑验收：步骤 4 游客回归 + 步骤 5 幂等 + 越权 4 条
         4. ./mvnw test 连跑两遍（readChapter 动过了）
-        5. 返回值改 BookshelfItemVO（步骤 3 的尾巴）
-        6. ⚠ 提交前先 git add novel-frontend/src/composables/
-              —— 两个新文件还没纳入版本库，views 却已经 import 它们了
+        5. 返回值改 BookshelfItemVO（步骤 3 的尾巴）了
 
   ★ 详细进度 → docs/项目笔记/14-书架系统.txt
   ★ 改动前必读 → AGENTS.md（关键设计决策 + 红线）

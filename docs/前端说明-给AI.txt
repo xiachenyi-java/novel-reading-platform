@@ -1,0 +1,347 @@
+================================================================================
+              前端说明（给 AI）—— novel-frontend
+                          小说管理系统
+                    整理日期：2026-10-14
+================================================================================
+
+【这份文件是什么】
+  做**前端任务**时的唯一必读文件。
+  ★ 省 token 的用法：
+      做前端 → 只读这份（347 行，自包含，**可整读**）
+      做后端 → 读《项目说明-给AI.txt》（591 行），不用读这份
+      ★ 两边都别互相翻，除非下面明确写了"去查 XXX"。
+  ★ 它是 AGENTS.md 那条"超过 300 行不许整读"规矩的**唯一例外** ——
+    因为它就是设计成整读的：读完这 347 行，前端相关的事就不用再翻别的文档了。
+
+【读取规矩】
+  · 前端所有代码在 novel-frontend/，共 17 个 .vue + 2 个组合式函数（2026-10-14 实测）
+  · 单文件超 300 行时先 grep 定位再读片段（LoginView 573 / MyShelf 665 / NovelListView 591）
+  · 查后端接口的**请求/返回细节** → 去《项目说明-参考附录.txt》附 A，本文件只列"前端调了哪些"
+  · 查"前端做到哪了" → 《项目笔记/00-项目总览.txt》
+  · 改完前端代码 → 按《AI操作细则.txt》§一 做文档同步
+
+
+################################################################################
+  一、技术栈与启动命令
+################################################################################
+
+  Vue            3.5.13        （Composition API + <script setup>）
+  Element Plus   2.8.8         （+ @element-plus/icons-vue 2.3.1，main.js 里全局注册了所有图标）
+  vue-router     4.4.5         （createWebHistory）
+  axios          1.7.7
+  pinia          2.2.6         ★ 装了也注册了，但**全项目没有用任何 store**，状态都走 composables/
+  Vite           5.4.11        Node >= 18
+
+  包管理器：**npm**（有 package-lock.json，README 也写的 npm）
+            ⚠ node_modules/ 里有 .pnpm/ 和 .ignored/ 残留目录，别被误导，用 npm 就行
+
+  ## 启动（在他机器上直接给这两条，别让他自己拼）
+    cd novel-frontend
+    npm run dev          →  http://localhost:5173
+    npm run build        →  产物在 dist/
+
+  ## 后端地址怎么配（vite.config.js:13）
+    默认 http://localhost:8080（IDEA 里跑的后端）
+    换地址：VITE_API_TARGET=http://localhost:8081 npm run dev   （Docker 里的后端）
+    ★ 代理规则：浏览器请求 /api/xxx → 转发到 {后端}/xxx，**rewrite 会去掉 /api 前缀**
+      所以 api 文件里写 '/novels'，实际打到后端的是 {后端}/novels
+    ★ 这个代理只在 dev 生效。生产由 Nginx 反代 /api，不走这里。
+
+  ## 起不来的常见原因
+    · 页面一片"暂无小说" → 多半是后端没起（vite 日志里会有 proxy error ECONNREFUSED）
+    · 样式改了不生效 → 先 Ctrl+Shift+R 硬刷新，别急着改代码
+    · Redis 容器叫 demo2-redis（docker ps 可查），后端依赖它
+
+
+################################################################################
+  二、目录结构（每个文件是干嘛的）
+################################################################################
+
+  novel-frontend/
+  ├── vite.config.js                代理 + @ 别名（别名配了，但现有代码都写相对路径）
+  ├── index.html
+  └── src/
+      ├── main.js                   ★ 引入顺序：Element Plus → element-plus/dist/index.css
+      │                               → styles/tokens.css → 再 use(router/pinia)
+      ├── App.vue                   全局重置（* 盒模型 / body 字号行高底色）
+      ├── styles/
+      │   └── tokens.css            ★★ 设计变量，全站唯一定义处 —— 改样式前必读第三章
+      ├── components/
+      │   ├── SiteHeader.vue        ★ 全站统一顶部导航（插槽用法见第四章）
+      │   ├── SiteFooter.vue        页脚（登录/注册/静态页在用）
+      │   └── StaticPageLayout.vue  静态页外壳（About/Contact/Feedback/Privacy/Terms 在用）
+      ├── composables/
+      │   ├── useAuth.js            isLogin / isAdmin / username / requireLogin / logout
+      │   │                          ★ 各 View 直接 import，不用 props 层层传
+      │   └── usePagination.js      分页状态复用（目前只有 MyShelf.vue 在用）
+      ├── api/
+      │   ├── index.js              ★ axios 实例 + 请求拦截（带 Token）+ 响应拦截（401/403）
+      │   ├── novel.js              小说/章节/上传/分类/排行榜
+      │   ├── bookshelf.js          书架 5 个接口
+      │   └── user.js               登录 / 注册
+      ├── router/index.js           13 条路由 + 全局守卫（见第六章）
+      └── views/
+          ├── NovelListView.vue     ★ 书城首页（Banner + 分类 + 搜索 + 分页 + 管理员删书）
+          ├── NovelDetailView.vue   详情 + 目录 + 管理员增删改章节（2 个 el-dialog）
+          ├── ChapterReadView.vue   阅读器 + 上一章/下一章
+          ├── MyShelf.vue           ★ 书架（排序 / 置顶 / 单个+批量移出 / 分页）
+          ├── RankingView.vue       排行榜（总榜 / 日榜）
+          ├── WriteNovel.vue        发布小说（el-upload 传封面）
+          ├── LoginView.vue         登录（账密 + 手机号 tab 是占位，未实现）
+          ├── RegisterView.vue      注册（含手写密码强度条）
+          └── static/               About / Contact / Feedback / Privacy / Terms
+
+
+################################################################################
+  三、★★ 设计 token（样式相关任务的第一站）
+################################################################################
+
+  文件：src/styles/tokens.css（已在 main.js 引入，全局可用，不用 import）
+  用法：在任意 <style scoped> 里写 color: var(--text-2); padding: var(--sp-4);
+
+  ## 为什么有这个文件（★ 别退回硬编码）
+    2026-10-14 之前：主色 #7c3aed 在 11 个文件里手抄 39 次，灰 #999 抄 34 次，
+    字号用了 18 个档位，圆角用了 9 种，断点用了 5 个值。改一次主色要动 39 处。
+    ★ 新增样式一律用变量；看到硬编码色值 = 该收敛了。
+
+  ## 主色（紫色系）
+    --brand        #7c3aed    按钮 / 链接 / 高亮
+    --brand-deep   #6d28d9    hover 加深
+    --brand-2      #4f46e5    渐变终点色
+    --brand-soft   #f3f0ff    选中行浅底
+    --brand-border #ddd6fe    浅边框
+    --brand-cover  渐变        默认封面占位
+    --brand-gradient  linear-gradient(135deg, var(--brand), var(--brand-2))  品牌名/主按钮
+
+  ## 中性灰阶（5 档，别再写新的灰）
+    --text-1 #1a1a2e  大标题/书名   --text-2 #444 正文      --text-3 #666 说明
+    --text-4 #999     辅助信息     --text-5 #bbb 极弱
+    --border #e8e8e8  --border-light #f0f0f0
+    --bg-page #f5f7fa --bg-soft #fafafa --bg-card #fff
+
+  ## 语义色
+    --success #10b981  --success-bg #d1fae5
+    --warning #f59e0b  --warning-text #d97706  --warning-bg #fef3c7
+    --danger  #ef4444
+
+  ## 字号（7 档）
+    --fs-xs 12  --fs-sm 13  --fs-base 14  --fs-md 16  --fs-lg 20  --fs-xl 26  --fs-2xl 32
+    ★ 正文不用写（body 已设 14px / 行高 1.5）
+
+  ## 间距（--sp-1~7 = 4/8/12/16/24/32/48，全是 4 的倍数）
+    ★ 别写 13px / 17px / 20px 这种不在档位里的值
+
+  ## 圆角（--radius-sm 6 / md 10 / lg 16 / full 999）
+  ## 阴影（--shadow-sm / md / lg / brand）
+  ## 布局
+    --container 1200px   ★ 全站内容区最大宽度（原来有 1200/1300 两种，已统一）
+    --header-h  64px
+    --z-header  100      --z-mask 2000
+  ## 过渡
+    --t-fast 0.15s   --t-base 0.2s    ★ 不要再写 0.3s/0.5s
+
+
+################################################################################
+  四、★ 公共组件与插槽
+################################################################################
+
+  ## SiteHeader（顶部导航，2026-10-14 新增）
+    三种用法：
+      <SiteHeader />                                   只要一条空导航栏
+      <SiteHeader> ...内容... </SiteHeader>            品牌名右边的区域（默认插槽）
+      <SiteHeader><template #right> ... </template></SiteHeader>   右侧区域
+
+    ★★ 插槽内容的样式写在**用它的页面**里，不要写进 SiteHeader.vue。
+       这是 Vue 的规矩：插槽内容归父组件管。（已在 NovelListView 里验证过生效）
+    ★ 窄屏（<=768px）导航栏自动折行 + 居中，页面自己的次要元素（如"游客模式"）由页面
+      自己在 @media 里 display:none 藏掉。
+    ★ 左右留白必须与页面内容区一致：桌面 --sp-5(24px)、窄屏 --sp-4(16px)。
+
+    ## 迁移状态（★ 做到一半，别以为全站都接上了）
+      ✅ NovelListView     已接
+      ⬜ 其余 8 个页面      待接：NovelDetailView / ChapterReadView / MyShelf /
+                            RankingView / WriteNovel / LoginView / RegisterView / StaticPageLayout
+      → 待接页面目前各自写了一份 .header，宽度有 1200 和 1300 两种（RankingView 是 1300）
+
+  ## SiteFooter
+    用在：LoginView / RegisterView / StaticPageLayout
+  ## StaticPageLayout
+    用在：static/ 下 5 个页面
+
+
+################################################################################
+  五、样式规范（硬性，别破）
+################################################################################
+
+  1. 颜色/字号/间距/圆角一律用 tokens.css 的变量，**不写硬编码色值**
+  2. 间距用 4 的倍数；字号只用那 7 档
+  3. 样式**就近放**（页面自己的 <style scoped>），不搞全局大 CSS
+     唯一例外：设计变量（tokens.css）必须全局
+  4. **不写行内 style**，除非是动态计算的值
+     ⚠ 现存 21 处行内 style，其中 NovelListView.vue:95 和 :152 的 padding:60px 0
+       会盖掉 CSS 的左右 24px，导致"加载中→有数据"切换时内容横向跳（已知问题，未修）
+  5. 三态齐全：**加载中 / 空数据 / 报错** 三个都要有
+     ★ 这是最能区分"学生作业"和"能用的产品"的地方
+  6. 响应式至少保证 375px（手机）和 1440px（桌面）不崩
+     ⚠ 目前零媒体查询的页面：NovelDetailView / ChapterReadView / WriteNovel / SiteFooter / App.vue
+       （static/ 下 5 个也没有，但它们继承 StaticPageLayout 的 640px 规则，不算问题）
+       其中前三个有 padding:16px 40px 固定值，窄屏会挤
+  7. 过渡 150~200ms（用 --t-fast / --t-base），不搞花哨动画
+  8. 中文注释写清"这块在干嘛"；组件名大驼峰，文件名跟组件名一致
+
+
+################################################################################
+  六、路由表（13 条，router/index.js）
+################################################################################
+
+  /                                    home         NovelListView
+  /novels/:id                          novelDetail  NovelDetailView
+  /novels/:novelId/chapters/:chapterId chapterRead  ChapterReadView
+  /login                               login        LoginView
+  /register                            register     RegisterView
+  /ranking                             ranking      RankingView
+  /shelf                               shelf        MyShelf          🔒 requiresAuth
+  /write                               write        WriteNovel       🔒 requiresAuth + role=ADMIN
+  /about /contact /terms /privacy /feedback           static/ 下 5 个静态页
+
+  全局守卫（router/index.js:42）：
+    · meta.requiresAuth 且无 token → 跳 /login?redirect=当前路径
+    · meta.role 与 localStorage.role 不符 → 跳 /
+    · 其余一律放行（游客可看）
+  ★ 首页/详情/阅读/榜单/登录/注册 都**不用**懒加载（直接 import），其余用 () => import()
+    —— 目前只有前 3 个是直接 import 的
+
+
+################################################################################
+  七、接口层（前端调了 18 个后端接口）
+################################################################################
+
+  ★ 请求细节（参数名/返回结构）去查《项目说明-参考附录.txt》附 A，这里只列清单。
+  ★★ 接口契约（URL / 方法 / 参数名 / 返回结构）**一律不改** —— 前端适配后端。
+
+  ## api/user.js
+    POST /users/login              POST /users/register
+
+  ## api/novel.js
+    GET    /novels?page&size&category&status&keyword     列表（服务端分页）
+    GET    /novels/{id}                                  详情
+    POST   /novels                                       新建（管理员）
+    DELETE /novels/{id}                                  删除（管理员）
+    POST   /upload                                       上传封面（multipart）
+    POST   /novels/{novelId}/chapters                    加章节
+    PUT    /novels/{novelId}/chapters/{chapterId}        改章节
+    DELETE /novels/{novelId}/chapters/{chapterId}        删章节
+    GET    /novels/{novelId}/chapters/{chapterId}        读章节
+    GET    /novels/categories                            全部分类
+    GET    /novels/ranking?top&type                      top 默认 10；type = total | daily
+
+  ## api/bookshelf.js（5 个）
+    POST   /bookshelf                  加入书架
+    GET    /bookshelf?page&size&sort   列表；sort = RECENT_READ | RECENT_ADD | NOVEL_UPDATE
+    PUT    /bookshelf/{id}/top         置顶/取消（body: { top }）
+    DELETE /bookshelf/{id}             单个移出（软删）
+    POST   /bookshelf/batch-remove     批量移出（body: { ids }）
+
+  ## ★ 阅读进度
+    前端**没有**独立的进度接口 —— 后端在 GET 章节时自己往 Redis 暂存，
+    再由定时任务刷回 DB。前端只负责在 MyShelf 里展示后端返回的进度字段。
+
+
+################################################################################
+  八、全局约定（改动前必看）
+################################################################################
+
+  ## Token 怎么走（api/index.js）
+    · 请求拦截：从 localStorage 读 token → 塞 Authorization: Bearer <token>
+    · ★ el-upload 那种不走 axios 实例的请求，要自己带 header
+      （见 WriteNovel.vue:46 的 :headers="uploadHeaders"）
+    · localStorage 存的 key：token / refreshToken / username / role
+
+  ## 401 vs 403（★ 别搞混）
+    401 未登录/token 失效 → 清凭证；**本来登录着**（hadToken）才跳登录页并带 redirect，
+                            本来就是游客则不跳，交给页面自己处理
+    403 已登录但无权限   → **不清凭证、不跳登录页**，直接 reject 让调用方提示
+    ★ 把 403 当 401 处理 → 管理员权限不足会被误踢下线
+
+  ## 登录态怎么读
+    · 组件里统一用 useAuth()：isLogin / isAdmin / username
+    · 退出用 useAuth().logout() + router.push('/login')，**不要** localStorage.clear()
+      （定向删除，避免以后加了主题偏好等 key 被一起清掉）
+    · requireLogin('收藏') → 未登录时弹 ElMessageBox 确认框，返回 boolean
+
+  ## ⚠ refreshToken 现状
+    登录时存了 refreshToken（LoginView.vue:209），但**全项目没有任何续期逻辑**，
+    只在 401/退出时被删掉。属于"存了没用"，别以为 token 失效会自动续。
+
+  ## 错误提示统一用
+    ElMessage.error / warning / success（Element Plus），不用 alert()
+    ★ 目前有 2 处**静默失败**（控制台有 error、界面无提示）：
+      NovelListView.vue:200  分类加载失败
+      ChapterReadView.vue:64 章节列表失败
+
+
+################################################################################
+  九、对标产品（★ 出前端方案前必做，方案里要写"这块参考谁"）
+################################################################################
+
+  ┌────────────┬──────────────────────────────────────────────────────┐
+  │ 页面        │ 对标                                                  │
+  ├────────────┼──────────────────────────────────────────────────────┤
+  │ 书城首页    │ 起点中文网 —— 信息密度高、分类导航、榜单入口突出      │
+  │ 书籍列表    │ 起点中文网 —— 列表 + 筛选 + 分页，不要大卡片流        │
+  │ 排行榜      │ 起点中文网 —— 榜单表格式，名次/封面/书名/热度列       │
+  │ 书架        │ 番茄小说 —— 卡片流、阅读进度可视化                   │
+  │ 阅读器      │ 起点/番茄 —— 沉浸式，顶栏极简，正文窄栏居中          │
+  │ 登录/注册   │ 番茄小说 —— 左右分栏、左侧品牌视觉                   │
+  └────────────┴──────────────────────────────────────────────────────┘
+
+  ★ 参考的是**结构和方法**，不是照抄像素。配色按 tokens.css 走，别把番茄红搬进来。
+  ★ 他给了截图/链接 → 以他给的为准。
+
+
+################################################################################
+  十、当前状态与待办（2026-10-14）
+################################################################################
+
+  ## 刚做完
+    · tokens.css 设计变量 + SiteHeader 公共导航（**只接了首页**）
+    · main.js / App.vue 接入变量，body 补了统一字号行高
+
+  ## 下一步（按优先级）
+    1. 把剩下 8 个页面接上 SiteHeader
+    2. 修 2 处静默失败（分类 / 章节列表）
+    3. 补 NovelDetailView / ChapterReadView / WriteNovel 的窄屏适配
+    4. 清掉现存硬编码色值（改样式时顺带，不用专门开一轮）
+    5. 书架页返回值改 BookshelfItemVO（后端任务，见 00-项目总览）
+
+  ## 已知问题（前端侧，未修）
+    · NovelListView.vue:200 / ChapterReadView.vue:64  静默失败
+    · NovelListView.vue:95 / :152  行内 padding 盖掉左右留白，切换时横向跳动
+    · 接口 500 时页面显示"暂无小说"—— 错误被伪装成空状态，用户看不出是挂了
+    · LoginView 的"手机号登录" tab 是纯占位，没有实现
+    · 全站零测试；前端也没有任何测试
+
+
+################################################################################
+  十一、常用 grep（省 token，先定位再读）
+################################################################################
+
+  # 找硬编码色值（该收敛成变量的）
+  grep -rn "#[0-9a-fA-F]\{6\}" src --include="*.vue"
+
+  # 找行内 style
+  grep -rn 'style="' src --include="*.vue"
+
+  # 找用了某个 token 的地方
+  grep -rn "var(--brand" src
+
+  # 找没写媒体查询的页面
+  grep -Ln "@media" src/views/*.vue src/components/*.vue
+
+  # 找所有接口调用
+  grep -rn "apiClient\.\|export const" src/api
+
+
+================================================================================
+                              文件结束
+================================================================================

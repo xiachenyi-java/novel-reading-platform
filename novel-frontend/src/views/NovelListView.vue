@@ -1,33 +1,33 @@
 <template>
   <div class="novel-list-wrapper">
-    <!-- ===== 顶部导航 ===== -->
-    <header class="header">
-      <div class="header-inner">
-        <div class="header-left">
-          <span class="brand" @click="$router.push('/')">📚 夏辰义的书城</span>
-          <div class="nav-links">
-            <span class="nav-link" :class="{ active: currentTab === 'all' }" @click="switchTab('all')">全部</span>
-            <span class="nav-link" :class="{ active: currentTab === 'finish' }" @click="switchTab('finish')">完本</span>
-            <span class="nav-link" :class="{ active: currentTab === 'free' }" @click="switchTab('free')">免费</span>
-            <span class="nav-link" @click="$router.push('/ranking')">🏆 排行</span>
-          </div>
-        </div>
-        <div class="header-right">
-          <span class="welcome" v-if="!isLogin">游客模式 · 浏览全站</span>
-          <span class="welcome" v-else>欢迎回来，{{ username }}</span>
-
-          <el-button v-if="isAdmin" type="success" size="small" @click="goWrite">
-            ✍️ 发布新书
-          </el-button>
-
-          <el-button v-if="!isLogin" type="primary" size="small" @click="goLogin">登录</el-button>
-          <template v-else>
-            <el-button size="small" @click="$router.push('/shelf')">📚 我的书架</el-button>
-            <el-button type="danger" size="small" @click="handleLogout">退出</el-button>
-          </template>
-        </div>
+    <!-- ===== 顶部导航 =====
+         壳和样式在 components/SiteHeader.vue（全站统一），
+         下面这些是"只属于首页"的内容，通过插槽塞进去。 -->
+    <SiteHeader>
+      <!-- 品牌名右侧：分类切换 + 榜入口 -->
+      <div class="nav-links">
+        <span class="nav-link" :class="{ active: currentTab === 'all' }" @click="switchTab('all')">全部</span>
+        <span class="nav-link" :class="{ active: currentTab === 'finish' }" @click="switchTab('finish')">完本</span>
+        <span class="nav-link" :class="{ active: currentTab === 'free' }" @click="switchTab('free')">免费</span>
+        <span class="nav-link" @click="$router.push('/ranking')">🏆 排行</span>
       </div>
-    </header>
+
+      <!-- 右侧：登录态相关 -->
+      <template #right>
+        <span class="welcome" v-if="!isLogin">游客模式 · 浏览全站</span>
+        <span class="welcome" v-else>欢迎回来，{{ username }}</span>
+
+        <el-button v-if="isAdmin" type="success" size="small" @click="goWrite">
+          ✍️ 发布新书
+        </el-button>
+
+        <el-button v-if="!isLogin" type="primary" size="small" @click="goLogin">登录</el-button>
+        <template v-else>
+          <el-button size="small" @click="$router.push('/shelf')">📚 我的书架</el-button>
+          <el-button type="danger" size="small" @click="handleLogout">退出</el-button>
+        </template>
+      </template>
+    </SiteHeader>
 
     <!-- ===== Banner 推荐位 ===== -->
     <div class="banner-section" v-if="bannerNovels.length > 0">
@@ -168,6 +168,7 @@ import { ElMessageBox, ElMessage } from 'element-plus'
 import { Loading, Search } from '@element-plus/icons-vue'
 import { getNovelList, getCategories, deleteNovel } from '../api/novel'
 import { useAuth } from '../composables/useAuth'
+import SiteHeader from '../components/SiteHeader.vue'
 
 const router = useRouter()
 
@@ -296,72 +297,44 @@ onMounted(() => {
 <style scoped>
 .novel-list-wrapper {
   min-height: 100vh;
-  background: #f5f7fa;
+  background: var(--bg-page);
 }
 
-/* ===== 顶部导航 ===== */
-.header {
-  background: white;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  padding: 12px 0;
-}
-.header-inner {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 20px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 30px;
-}
-.brand {
-  font-size: 22px;
-  font-weight: 700;
-  color: #7c3aed;
-  cursor: pointer;
-  background: linear-gradient(135deg, #7c3aed, #4f46e5);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
+/* ===== 顶部导航里属于"首页自己"的那几块 =====
+   （导航栏的壳和通用样式在 components/SiteHeader.vue，不在这里）
+   ★ 这些样式是塞进 SiteHeader 插槽的内容，Vue 的规矩是"谁的页面谁管样式"，
+     所以必须留在本文件，不能挪到 SiteHeader 里去。 */
 .nav-links {
   display: flex;
-  gap: 20px;
+  gap: var(--sp-5);
 }
 .nav-link {
   cursor: pointer;
-  color: #666;
-  font-size: 15px;
-  transition: color 0.3s;
+  color: var(--text-3);
+  font-size: var(--fs-base);
+  white-space: nowrap;
+  transition: color var(--t-base);
 }
 .nav-link:hover {
-  color: #7c3aed;
+  color: var(--brand);
 }
 .nav-link.active {
-  color: #7c3aed;
+  color: var(--brand);
   font-weight: 600;
 }
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
 .welcome {
-  color: #999;
-  font-size: 14px;
+  color: var(--text-4);
+  font-size: var(--fs-base);
+  white-space: nowrap;
 }
 
 /* ===== Banner ===== */
+/* ★ 左右留白必须和 SiteHeader 用同一个值（--sp-5），
+   否则导航栏和下面内容区会差几个像素，看起来"没对齐" */
 .banner-section {
-  max-width: 1200px;
-  margin: 20px auto 0;
-  padding: 0 20px;
+  max-width: var(--container);
+  margin: var(--sp-5) auto 0;
+  padding: 0 var(--sp-5);
 }
 .banner-item {
   background: linear-gradient(135deg, #1a1040, #2d1b69);
@@ -427,13 +400,13 @@ onMounted(() => {
   margin-top: 16px;
 }
 .category-nav .container {
-  max-width: 1200px;
+  max-width: var(--container);
   margin: 0 auto;
-  padding: 0 20px;
+  padding: 0 var(--sp-5);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 20px;
+  gap: var(--sp-5);
 }
 .category-list {
   display: flex;
@@ -481,9 +454,9 @@ onMounted(() => {
 
 /* ===== 内容区 ===== */
 .container {
-  max-width: 1200px;
+  max-width: var(--container);
   margin: 0 auto;
-  padding: 20px 20px 40px;
+  padding: var(--sp-5) var(--sp-5) var(--sp-7);
 }
 .section-header {
   display: flex;
@@ -577,19 +550,15 @@ onMounted(() => {
 }
 
 /* ===== 响应式 ===== */
+/* ★ 导航栏的窄屏折行规则已经搬进 SiteHeader.vue 统一管，
+   这里只留"首页自己"的部分 */
 @media (max-width: 768px) {
-  .header-inner {
-    flex-direction: column;
-    gap: 10px;
+  /* 手机屏位置紧张，把欢迎语藏掉，给按钮腾地方 */
+  .welcome {
+    display: none;
   }
-  .header-left {
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 15px;
-  }
-  .header-right {
-    flex-wrap: wrap;
-    justify-content: center;
+  .nav-link {
+    font-size: var(--fs-sm);
   }
   .banner-item {
     padding: 20px;
@@ -601,9 +570,13 @@ onMounted(() => {
     width: 80px;
     height: 110px;
   }
+  /* ★ 这条的 padding 必须和上面 .container 一致。
+     它选择器更长（优先级更高），会盖掉 .container 的 padding，
+     所以这里得单独再说一遍，否则分类栏会比书本列表多凸出 8px。 */
   .category-nav .container {
     flex-direction: column;
     align-items: stretch;
+    padding: 0 var(--sp-4);
   }
   .category-list {
     justify-content: center;
@@ -611,8 +584,9 @@ onMounted(() => {
   .search-box {
     width: 100%;
   }
+  /* 窄屏左右留白也要和导航栏一致（SiteHeader 窄屏用的是 --sp-4） */
   .container {
-    padding: 16px 12px;
+    padding: var(--sp-4) var(--sp-4) var(--sp-6);
   }
 }
 </style>
