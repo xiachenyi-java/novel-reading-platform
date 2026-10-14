@@ -24,7 +24,7 @@
   附 A、目录结构
 ################################################################################
 
-  后端（src/main/java/com/example2/demo2/，实测 48 个类）
+  后端（src/main/java/com/example2/demo2/，实测 49 个类）
 
   ├── Demo2Application.java            启动类（★ 已加 @EnableScheduling，定时任务要用）
   │
@@ -63,14 +63,18 @@
   │   ├── UserController.java          注册/登录/登出/刷新
   │   └── FileController.java          封面上传
   │
-  ├── service/
+  ├── service/                         实现类（★ 后缀是 Iml 不是 Impl）
   │   ├── NovelServiceIml.java         ★ 小说服务实现（核心业务，含缓存三件套）
   │   │                                  ★ readChapter 里调 IBookshelfService.updateProgress
   │   │                                    （★★ 必须判空 —— readChapter 是游客接口）
-  │   ├── INovelService.java           ★ 小说服务接口
   │   ├── BookshelfServiceIml.java     ★ 5 个接口 + updateProgress
-  │   ├── IBookshelfService.java       ★ 书架服务接口
-  │   └── UserService.java             认证逻辑
+  │   ├── UserServiceIml.java          认证逻辑
+  │   │                                  ★ 原名 UserService.java，2026-10-14 统一成 Iml
+  │   │                                  ★ 文档里散见的 "UserService.xxx()" 都指它
+  │   └── Iservice/                    ★ 服务接口层（2026-10-13 从 service/ 抽出）
+  │       ├── INovelService.java       ★ 小说服务接口
+  │       ├── IBookshelfService.java   ★ 书架服务接口
+  │       └── IUserService.java        ★ 认证服务接口（2026-10-13 新增）
   │
   ├── task/
   │   └── ProgressFlushTask.java       ★ 每 5 分钟把 Redis 进度刷回 DB
@@ -79,11 +83,14 @@
   ├── repository/
   │   ├── NovelRepository.java         ★ JpaRepository + JpaSpecificationExecutor
   │   ├── NovelSpecifications.java     ★ 动态查询条件构造器
-  │   ├── BookshelfRepository.java     ★ 5 个方法：
+  │   ├── BookshelfRepository.java     ★ 6 个方法：
   │   │                                  findByUserIdAndNovelId / findByIdAndUserId
   │   │                                  / findByUserIdAndDeleted
   │   │                                  / findPageOrderByNovelUpdate（原生 SQL）
   │   │                                  / softDeleteByIds（批量软删，防越权）
+  │   │                                  / updateProgressFromRedis（定时刷回，幂等）
+  │   │                                  ⚠ findByIdAndUserId **不带 deleted 条件**
+  │   │                                    ⇒ 问题 23 的根因就在这
   │   ├── ChapterRepository.java       findByNovelIdOrderByChapterNumberAsc 等
   │   └── UserRepository.java          findByUsername
   │
@@ -112,12 +119,16 @@
       ├── NovelRankVO                  排行榜条目
       └── LoginVO                      token / refreshToken / userInfo
 
-  前端（novel-frontend/，实测 16 个 .vue）
+  前端（novel-frontend/，实测 16 个 .vue + 2 个组合式函数）
   ├── src/api/index.js                 ★ axios 实例（自动带 Token，401 跳登录）
   ├── src/api/novel.js                 列表/详情/章节CRUD/上传/排行榜
   ├── src/api/bookshelf.js             ★ 书架 5 个接口 + 阅读进度
   ├── src/api/user.js                  登录/注册
-  ├── src/router/index.js              8 条路由，/shelf 和 /write 需登录
+  ├── src/composables/                 ★ 组合式函数（2026-10-14 新增）
+  │   ├── useAuth.js                   登录态 / 权限 / 用户名 / 退出
+  │   │                                  ★ 各 View 直接 import 它，不用 props 传
+  │   └── usePagination.js             分页状态复用（MyShelf.vue 在用）
+  ├── src/router/index.js              13 条路由，/shelf 和 /write 需登录
   ├── src/App.vue
   ├── src/components/                  SiteFooter / StaticPageLayout
   └── src/views/

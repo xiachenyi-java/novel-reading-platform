@@ -154,7 +154,7 @@ P0 · 必须做（真实漏洞，优先修）
     验证：上传 15MB 文件，应返回友好提示。
 
   ✓ 补 user_refresh 反向索引（登出后 refreshToken 失效）（已完成）
-    位置：service/UserService.java 的 login()
+    位置：service/UserServiceIml.java 的 login()
     ★ 这是 03-认证授权 和 04-限流防刷 共有的 P0 项。
     详见：项目笔记/03-认证授权.txt
 

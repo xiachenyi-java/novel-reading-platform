@@ -29,13 +29,14 @@
   ✅ BookshelfTopDTO.top 改成 Boolean（原为 Integer，传 2 会存进库）
   ✅ BookshelfSortConverter 从 common/ 移到 config/（它是 Spring 配置 bean）
   ✅ 编译通过（./mvnw -o clean compile）
+  ✅ 01-schema.sql 编码修回 UTF-8（原问题 20，2026-10-13 提交 b6b44d6）
+     ★ 只是重新编码，SQL 正文一字未动（解码后逐行 diff 只差开头的 BOM）
+     ★ 判据①②实测通过（2026-10-14）：无 ff fe BOM + CREATE TABLE 数到 4
+     ⚠ 判据④（docker compose down -v && up --build）**还没实测**
 
   ------------------------------------------------------------------
   ⚠⚠ 仍未解决的（按紧急度）
   ------------------------------------------------------------------
-  🔴 01-schema.sql **编码变成 UTF-16LE** → docker 建表会失败（问题 20）
-     内容已对（4 张表齐全），但 MySQL 客户端读不了 UTF-16。
-     根因：PowerShell 的 > 重定向默认写 UTF-16LE。
   🟡 remove() 没删 Redis 的进度 key → 移出再重新加入，旧进度被写回来（问题 24）
   🟡 top()/remove() 不过滤 deleted → 软删掉的记录还能被置顶（问题 23）
   🟡 书架 + 进度功能 0 测试
@@ -103,7 +104,8 @@
          假阴性让你去"修"一个已经正确的东西。
   ─────────────────────────────────────────────────────────
 
-  Repository 5 个方法全部写完：
+  Repository 5 个方法全部写完（★ 这是步骤 2 当时的 5 个；
+  步骤 5 的定时任务后来又加了第 6 个 updateProgressFromRedis，见 07-数据访问.txt）：
     ✅ findByUserIdAndNovelId(Integer, Integer)        复活逻辑用
     ✅ findByIdAndUserId(Integer, Integer)             归属校验用（★ 不是 findById）
     ✅ findByUserIdAndDeleted(Integer, Integer, Pageable)   recent_read / recent_add

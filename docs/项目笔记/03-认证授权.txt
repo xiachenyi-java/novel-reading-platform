@@ -3,7 +3,7 @@
 ================================================================================
   对应知识笔记：docs/知识笔记/03-认证授权.txt
   相关代码：common/JwtUtil.java、common/UserContext.java、config/LoginInterceptor.java、
-            service/UserService.java、controller/UserController.java
+            service/UserServiceIml.java、controller/UserController.java
 
 
 ################################################################################

@@ -22,7 +22,9 @@
   06     ObjectMapper 交给 Spring 注入    ✓      JacksonConfig 已删除（8edf2ac）
   07     读者接口白名单                   ✓      isGuestEndpoint 判定
   08     提取配置常量                     △      file.base-url 提了，CORS 没提
-  09     抽离 Service 接口层              ✓      INovelService + NovelServiceIml
+  09     抽离 Service 接口层              ✓      3 个服务全抽完：Iservice/ 下的
+                                                 INovelService / IBookshelfService
+                                                 / IUserService + 各自 *ServiceIml
   ------------------------------------------------------------------
 
 【做得好的地方（面试可以主动讲）】
@@ -101,7 +103,7 @@
   3     Novel.setChapters() 是空方法体          entity/Novel.java
         没有任何调用方，属于会误导后来者的死代码
   ------------------------------------------------------------------
-  4     UserService.refresh 里未使用的变量      service/UserService.java
+  4     UserService.refresh 里未使用的变量      service/UserServiceIml.java
         String key = "refresh:" + userId;   ← 定义了从没用过
   ------------------------------------------------------------------
   5     两个排行榜方法 100% 重复                 NovelServiceIml
@@ -158,7 +160,7 @@ N1  ★ 黑名单过期判断的边界不一致
 --------------------------------------------------------------------------------
 N2  passwordHash 被写进 Redis 缓存
 --------------------------------------------------------------------------------
-  位置：service/UserService.java 的 getCurrentUser，第 4 步
+  位置：service/UserServiceIml.java 的 getCurrentUser，第 4 步
 
     String json = objectMapper.writeValueAsString(dbUser);
     stringRedisTemplate.opsForValue().set(key, json, 30, TimeUnit.MINUTES);

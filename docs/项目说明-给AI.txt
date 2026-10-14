@@ -22,7 +22,7 @@
 
 【★★ 开工前先看这两条】
 
-  1. 你还有一份"行为守则" → docs/系统提示词-给AI.txt
+  1. 你还有一份"行为守则" → docs/系统提示词/系统提示词-给后端AI.txt
      这份讲"**项目是什么**"（事实），那份讲"**AI 该怎么干活**"（纪律）：
      角色定位 / 双轨制全局视图 / 设计决策速查 / 验证文化 6 条 /
      交互约束 / 改完代码的同步职责。
@@ -47,9 +47,11 @@
 【性质】
   个人学习项目 / 简历项目。目标不是上线运营，是把 Java 后端知识点串成线。
 
-【规模】（2026-10-10 实测核实；旧文档里的 37/2000/19/9 都是错的）
-  · 后端：48 个 Java 类，2742 行代码，21 个 REST 接口
+【规模】（2026-10-14 实测核实；旧文档里的 37/2000/19/9 都是错的）
+  · 后端：49 个 Java 类，2806 行代码，21 个 REST 接口
+          （口径：find src/main/java -name "*.java"，与旧数字同口径）
   · 前端：16 个 .vue（views 13 + components 2 + App.vue）
+          + composables/ 2 个组合式函数（useAuth / usePagination，2026-10-14 新增）
   · 数据库：4 张表（user / novel / chapter / bookshelf）
   · Redis：8 类 key + 2 个 Spring Cache 区域（novel / novel-null）
   · 测试：3 个测试类 12 个用例
@@ -72,8 +74,8 @@
     POST /bookshelf｜GET /bookshelf｜PUT /bookshelf/{id}/top
     DELETE /bookshelf/{id}｜POST /bookshelf/batch-remove
 
-  ⚠⚠ 但 **docker 建表脚本编码坏了**（问题 20）→ 部署跑不起来，
-      后面的验收全被它堵死。详见 §八。
+  ✅ docker 建表脚本编码**已修**（问题 20 关闭，2026-10-13 提交 b6b44d6）
+     → 部署阻塞项已清，不再挡后面的验收。详见 §八。
 
 
 ################################################################################
@@ -357,13 +359,12 @@
     #   mysql 的 /docker-entrypoint-initdb.d）。
     #   ★ 该脚本**只在数据目录为空时执行一次** ——
     #     改了 schema 必须 `down -v` 重建，否则脚本不跑。
-    # ⚠⚠ 2026-10-10 起这个脚本是坏的：内容已对（4 张表齐全），
-    #     但**编码是 UTF-16LE**（PowerShell 的 > 重定向干的），
-    #     MySQL 客户端读到 NUL 字节就报错 ⇒ 建表失败 ⇒ app 起不来。
-    #     **先解决问题 20 再跑 compose。**
-    #     ★ 自检：head -c 2 docker/mysql/init/01-schema.sql | od -An -tx1
-    #       输出 ff fe 就是 UTF-16LE，坏的
-    #     ★ 注意坑：UTF-16 时 grep -c "CREATE TABLE" 返回 0，
+    # ✅ 编码问题已修（问题 20，2026-10-13 b6b44d6）。**但 compose 重建还没实测过**，
+    #    第一次跑请盯 mysql 容器日志。
+    #    ★ 自检（改完 schema 顺手跑一遍）：head -c 2 docker/mysql/init/01-schema.sql
+    #       | od -An -tx1 —— 输出 ff fe 就是 UTF-16LE，坏的（PowerShell 的 >
+    #       重定向默认写 UTF-16LE，别用它重新 dump）
+    #    ★ 注意坑：UTF-16 时 grep -c "CREATE TABLE" 返回 0，
     #       看起来像"表没导进去"，其实是"编码不对" —— 先看编码再看内容
     # 注意：mysql 没有 healthcheck，app 可能因数据库未就绪而启动失败，
     #       需要手动 docker compose restart app
@@ -411,7 +412,7 @@
                                        ★ 改"创建"时别忘了"修改"（见问题 19）
                                     3. 重启 dev 应用 → ddl-auto=update 自动加列
                                     4. ★ 重新 dump docker/mysql/init/01-schema.sql
-                                       （覆盖，不是追加！见问题 20）
+                                       （覆盖，不是追加！这是问题 20 第一回合的教训）
                                     5. 重启 dev 让 Hibernate 把表建出来再 dump ——
                                        顺序反了会 dump 出一份缺表的脚本
 
@@ -450,10 +451,12 @@
      ★ 这份文件里**只留索引和元教训**，不抄正文 —— 抄了就必然漂移。
 
   【活跃问题速查】
-    🔴 20  schema.sql 编码 UTF-16LE      挡部署，MySQL 客户端读不了
     🟡 23  top/remove 不过滤 deleted     软删掉的记录还能被置顶
     🟡 24  remove 没删 Redis 进度 key    复活后旧阅读进度被写回
     🟡   防击穿 locks Map 只增不减       无界增长（内存泄漏隐患）
+
+    ✅ 20  schema.sql 编码 UTF-16LE → 2026-10-13 已修（提交 b6b44d6）
+           ★ 部署阻塞项已清；但 docker compose 重建这一步**还没实测**
 
     【上线前必改 · 安全隐患 4/5/6】
       4  上传只校验 Content-Type → 可存储型 XSS
@@ -543,7 +546,10 @@
   ├── 项目说明-参考附录.txt          ★ 2026-10-11 拆出（查表用，日常不读）
   │                                   附 A 目录结构 / 附 B 数据模型
   │                                   附 C 接口清单 / 附 D Redis Key 全景
-  ├── 系统提示词-给AI.txt            ★ AI 行为守则（"AI 该怎么干活"）
+  ├── 系统提示词/                    ★ 2026-10-14 拆成三份（按角色）
+  │   ├── 系统提示词-给后端AI.txt     ★ AI 行为守则（"AI 该怎么干活"）
+  │   ├── 系统提示词-给前端AI.txt
+  │   └── 系统提示词-给产品ai.txt
   ├── AI操作细则.txt                 ★ 2026-10-11 拆出（触发时才读）
   │                                   文档同步授权 + 面试题库归档机制的完整规则
   │                                   ★ 从系统提示词搬出，为省每轮 token

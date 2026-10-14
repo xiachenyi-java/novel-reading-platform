@@ -3,7 +3,7 @@
 ================================================================================
   对应知识笔记：docs/知识笔记/05-缓存体系.txt
   相关代码：config/CacheConfig.java、service/NovelServiceIml.java、
-            service/UserService.java、config/LoginInterceptor.java
+            service/UserServiceIml.java、config/LoginInterceptor.java
 
 
 ################################################################################
