@@ -19,10 +19,12 @@
   ------------------------------------------------------------------
   编号  问题                                    紧急度  一句话
   ------------------------------------------------------------------
-  23    top/remove 不过滤 deleted               🟡 语义   软删记录还能被置顶
-  24    remove 没删 Redis 进度 key              🟡 语义   复活后旧进度被写回
+  25    top/remove 传了 deleted=1（新回归）     🔴 功能   在架记录的置顶/移出**全部失败**
+  23    top/remove 不过滤 deleted               🟡 语义   仍能操作**已软删**的记录
+  24    remove 没删 Redis 进度 key              🟡 语义   单条加了但走不到；**批量那条根本没加**
   --    防击穿 locks Map 只增不减                🟡 隐患   无界增长（无界内存）
   ------------------------------------------------------------------
+  ★ 25 是 dc8f67a 修 23 时**新引入**的回归，优先级最高（挡功能，不是挡数据）
   ✅ 20 已修（2026-10-13 b6b44d6）—— 已移出本表，见条目 20 的「✅ 现状」
      ★ 部署阻塞项就此清空 ⇒ 「上线前必须解决」里只剩安全隐患 4/5/6
 
@@ -84,8 +86,9 @@
 
   ★★ 书架系统改动带出来的 6 条 → 19 / 20 / 21 / 22 / 23 / 24。
      19 ✅ 已修 / 20 ✅ 已修（2026-10-13）/ 21 ✅ 已修 / 22 ✅ 已修
-     ⚠ 23 仍未修（软删记录能被置顶）
-     ⚠ 24 新发现（移出再重新加入，旧进度被写回来）
+     ⚠ 23 **仍未修**（软删记录能被置顶）
+     ⚠ 24 **仍未修**（旧进度被写回来；代码里加了删除，但被 25 挡住走不到）
+     🔴 25 **新回归**（dc8f67a 修 23 时传错参数，置顶/移出对在架记录全废）
 
   19. ✅【2026-10-08 发现 · 当天已修】updateNovel 漏了 author 兜底
 
@@ -264,7 +267,7 @@
         PUT /bookshelf/{id}/top、DELETE /bookshelf/{id}、
         POST /bookshelf/batch-remove。
 
-  23. 🟡【2026-10-10 发现 · 未修】软删掉的记录还能被置顶
+  23. ✅【2026-10-10 发现 · 2026-10-14 已修（提交 dc8f67a）】软删掉的记录还能被置顶
 
       ── 现象 ──
         BookshelfServiceIml.top() / remove() 用的是 findByIdAndUserId，
@@ -287,6 +290,24 @@
         ② 或者在复活分支里把 isTop / topTime 一起重置
         ★ 建议 ① —— 和 softDeleteByIds 的 WHERE 里带 userId 是同一个思路：
           **让数据库替你做状态校验**，比在 Java 里 if 判断可靠。
+
+      ── ⚠⚠ 现状（2026-10-14 复核代码）—— 未修，且改错了 ──
+        走了修法 ① 的方向，查询换成了带 deleted 条件的那一支：
+          repository/BookshelfRepository.java
+            ✗ 删掉了  findByIdAndUserId(id, userId)            ← 旧的无条件查询已不存在
+            ✅ 换成    findByIdAndUserIdAndDeleted(id, userId, Integer deleted)
+        **但传的常量反了**：
+          service/BookshelfServiceIml.java:143  top()    → (BookshelfId, userId, **1**)
+          service/BookshelfServiceIml.java:160  remove() → (BookshelfId, userId, **1**)
+          entity/Bookshelf.java:55              deleted = 0 是"存在"，1 是"已删"
+        ⇒ 传 1 = 只查**已软删**的记录，与"校验记录还在架上"的意图正好相反。
+        ⇒ 本条没修好；而且顺带**制造了新问题 25**（在架记录反而置顶/移出不了）。
+        ★ 修法还是原样：deleted 那个参数应当传 **0**（或者别用 =Deleted 这一支）。
+        ★ 教训归教训：这条**不能算已关闭**，速查表里保留。
+
+      ── ⚠ 尚未验证 ──
+        上面这段是**读代码**得出的，判据一次都没跑过。
+        "代码改了" ≠ "行为对了"；"代码看懂了" ≠ "跑过了"。
 
       ── 判据 ──
         □ 移出一本 → 用它的 id 调 PUT /bookshelf/{id}/top
@@ -331,11 +352,70 @@
         ★ 也可以反过来想：如果本意就是"重新加入时恢复进度"，
           那 remove() 里就不该清空那两个字段 —— **两者必须二选一**。
 
+      ── ⚠ 现状（2026-10-14 复核代码）—— 代码补了，但**走不到** ──
+        remove() 里确实加上了删 key（BookshelfServiceIml.java:170-177），还带 try/catch：
+          stringRedisTemplate.delete("progress:" + userId + ":" + novelId);
+        ★ 但 remove() 第一步的查询传了 deleted=1（见新条目 25），
+          对**在架的**记录必然 orElseThrow ⇒ 根本执行不到删 key 那几行。
+        ⇒ 本条在"代码层面"补上了，"行为层面"依旧没修好 —— 等 25 修完再回头看它。
+        ★ 顺带记一笔：这段 try/catch 的思路是对的（Redis 抖动不该让"移出"失败），
+          修 25 的时候**别顺手把它删了**。
+        ★★ 另一个缺口（2026-10-14 一并发现）：**批量移出没删 key**。
+          batchRemove() 只调 softDeleteByIds（一条 UPDATE），
+          **完全没有碰 progress:*** —— 所以就算 25 修好了，
+          走"批量移出"这条路进来的书，旧进度照样会被写回。
+          ⇒ 修 24 时两条路径都要覆盖（remove + batch-remove），
+            别只修单条那条。
+
       ── 判据 ──
         □ 读到第 5 章 → 等一轮刷回 → 移出书架 → 重新加入 → 等一轮
           → 期望 last_read_chapter_id = null
           → 现在会变成原来的 chapterId
         □ 顺带验幂等：不读书等两个周期，日志期望"扫描 N 条，更新 0 条"
+
+  25. 🔴【2026-10-14 复核发现 · 未修】★ 新回归：top/remove 传了 deleted=1，
+      在架记录的**置顶 / 移出全部失败**
+
+      ── 现象（读代码可确认；接口层判据待跑）──
+        entity/Bookshelf.java:55
+          private Integer deleted = 0;    // 注释原文：0 是存在
+        service/BookshelfServiceIml.java
+          :143  top()    → findByIdAndUserIdAndDeleted(BookshelfId, userId, 1)
+          :160  remove() → findByIdAndUserIdAndDeleted(BookshelfId, userId, 1)
+        ⇒ 查询条件成了 deleted = 1，也就是"只找**已经移出**的那条记录"。
+
+      ── 后果（两个方向都错）──
+        ① 正常在架的记录（deleted=0）→ 查不到 → orElseThrow：
+             · PUT /bookshelf/{id}/top  → body.code=500「小说不在书架」
+             · DELETE /bookshelf/{id}   → body.code=500「书不存在」
+           ⇒ **这两个接口对正常数据完全不可用**，不是边界情况，是主路径。
+        ② 已移出的记录（deleted=1）→ 反而查得到 → 能置顶、能再"移出"一次
+           ⇒ 问题 23 的现象（软删记录被置顶）**仍然存在**。
+
+      ── 为什么危险 ──
+        · 这是 dc8f67a 修问题 23 时带出来的，diff 上只差**一个字符**（0 写成 1），
+          但后果是"功能直接坏掉"，不是"数据悄悄错"。
+        · ★ 典型的「改对了方向、写错了常量」—— 修 bug 引入 bug。
+          ★ 更该记住的：这类错误**跑一下就必现**（对任意一本在架的书点置顶就 500），
+          docker 故障演练 / 验收清单里只要碰过置顶，早就该暴露。
+          ⇒ 反过来说明：这两条路径**从来没被跑过**。
+
+      ── 修法（1 个字符）──
+        top() / remove() 的第三个参数 1 → 0。
+        ★ 更稳的做法：别让调用方自己传常量，给 Repository 两个语义明确的方法名：
+            findByIdAndUserIdInShelf(id, userId)   // 内部固定 deleted=0
+          ⇒ 让"传错 0/1"这种事**写不出来**，而不是靠人记住。
+
+      ── 判据（★ 先写期望值，再跑）──
+        □ 加入一本 → PUT /bookshelf/{id}/top (top=true)
+          → 期望 body.code=200，且重新查列表时它排第一条
+          → 现在会拿到 code=500
+        □ 加入一本 → DELETE /bookshelf/{id}
+          → 期望 body.code=200，且列表里不再有它
+        □ ★ 反向探针（验判据本身会不会报错）：拿一个**已移出**的 id 再调一次 remove
+          → 现在是 200（错），修好后期望 500 /「不在书架」
+        ★ 一律看 **body 的 code 字段**，不看 HTTP 状态码
+          （本项目 RuntimeException 也返回 HTTP 200）。
 
   17. ✅【已实测通过（2026-10-07）】Dockerfile 的 JDK 版本与 pom 不匹配
 

@@ -228,10 +228,12 @@ P2 · 可以做
 
   BookshelfRepository            ★ 2026-10-08 新增
     Optional<Bookshelf> findByUserIdAndNovelId(Integer, Integer)    复活逻辑
-    Optional<Bookshelf> findByIdAndUserId(Integer, Integer)         ★ 归属校验
+    Optional<Bookshelf> findByIdAndUserIdAndDeleted(Integer, Integer, Integer)  ★ 归属校验
+        ★ 2026-10-14 dc8f67a：由 findByIdAndUserId 改名 + 加一个 deleted 参数
         ★ 为什么不是 findById：findById 谁都能查，越权就藏在这一步。
           把 userId 写进查询条件 = 让数据库做安全检查，
           比"查出来再 if 判断是不是自己的"可靠（后者容易忘了判）
+        ⚠⚠ 但调用方 top()/remove() 传的 deleted=1（应为 0）→ 见问题 25
     Page<Bookshelf> findByUserIdAndDeleted(Integer, Integer, Pageable)
         recent_read / recent_add 两种排序共用（只换 Sort 对象）
     Page<Bookshelf> findPageOrderByNovelUpdate(Integer, Pageable)
@@ -308,8 +310,9 @@ P2 · 可以做
       ⇒ 一旦出现重复行，「加入书架」接口会从此永久 500
   ★ 软删除：移出书架是 deleted=1，不是 DELETE 行
     ⇒ 以后所有书架查询都必须带 deleted = 0，漏了就查出已删除的
-    ⚠ 现在 top() / remove() 用的 findByIdAndUserId **没带 deleted**
-      → 见问题清单 问题 23
+    ✅ 2026-10-14：top() / remove() 已改用带 deleted 条件的查询（问题 23 的方向）
+    ⚠⚠ 但把 deleted 传成了 **1**（1 是"已删"，0 才是"存在"）—— 反了
+      ⇒ 在架记录的置顶 / 移出全部 500。见问题清单 25，未修
 
 【冗余字段】
   novel.total_words

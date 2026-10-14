@@ -10,6 +10,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -23,6 +24,8 @@ public interface BookshelfRepository extends JpaRepository<Bookshelf, Integer> {
 
     //分页，最近阅读和最近增加两种排序共用
     Page<Bookshelf> findByUserIdAndDeleted(Integer userId, Integer deleted, Pageable pageable);
+
+    List<Bookshelf> findByIdInAndUserIdAndDeleted(Collection<Integer> ids, Integer userId, Integer deleted);
 
     //分页按新更新小说排序，因为跨表必须用原生sql
     @Query(value = "SELECT b.* FROM bookshelf b " +

@@ -1,7 +1,7 @@
 ================================================================================
               项目笔记 14 · 书架系统 · 实现进度
                           小说管理系统
-                    最后更新：2026-10-10
+                    最后更新：2026-10-14
 ================================================================================
 
 【这份文档是什么】
@@ -16,10 +16,14 @@
     步骤 1  Novel 加 author             ✅ 完成
     步骤 2  Bookshelf 实体 + Repository  ✅ 完成（唯一约束已补进库）
     步骤 3  Service + Controller         ✅ 5/5 接口全通
-                                            剩：返回值改 VO（步骤 3 尾巴）
+                                            返回值改 VO ✅（列表接口，dc8f67a）
+                                            ⚠ 尾巴：加入接口仍返回实体 Bookshelf；
+                                              章节统计还没做
     步骤 4  readChapter 写 Redis 进度    ✅ 完成（含游客判空）
     步骤 5  定时任务刷回 DB              ✅ 完成（ProgressFlushTask）
-  ⇒ **5 步全部走完**（步骤 3 的"返回值改 VO"是尾巴，不影响主线）
+  ⇒ 5 步都**写完了**，但"写完"≠"能用"：
+    dc8f67a 收尾时带出一个回归（🔴 问题 25），
+    使置顶 / 移出两个接口对**在架记录**直接 500。见下方"仍未解决的"。
 
   ------------------------------------------------------------------
   ✅ 已修的
@@ -37,10 +41,13 @@
   ------------------------------------------------------------------
   ⚠⚠ 仍未解决的（按紧急度）
   ------------------------------------------------------------------
+  🔴 top()/remove() 把 deleted 传成了 1 → 在架记录的置顶/移出**全部 500**（问题 25）
+     ★ 新回归，dc8f67a 修问题 23 时带出来的，只差一个字符；最优先
   🟡 remove() 没删 Redis 的进度 key → 移出再重新加入，旧进度被写回来（问题 24）
-  🟡 top()/remove() 不过滤 deleted → 软删掉的记录还能被置顶（问题 23）
+     ★ 代码已加删除，但被上面 25 挡住、执行不到，等于没修
+  🟡 top()/remove() 不过滤 deleted → 软删掉的记录还能被置顶（问题 23，未修好）
   🟡 书架 + 进度功能 0 测试
-  ⚪ 返回值仍是实体 Bookshelf，不是 BookshelfVO
+  ⚪ 加入接口仍返回实体 Bookshelf（列表接口已改 BookshelfItemVO）；章节统计未做
 
   判据 B（./mvnw test 可靠跑通）状态：**待跑**
     ★ 本轮动过的现有文件：NovelServiceIml（含 readChapter）、NovelController、
@@ -107,7 +114,10 @@
   Repository 5 个方法全部写完（★ 这是步骤 2 当时的 5 个；
   步骤 5 的定时任务后来又加了第 6 个 updateProgressFromRedis，见 07-数据访问.txt）：
     ✅ findByUserIdAndNovelId(Integer, Integer)        复活逻辑用
-    ✅ findByIdAndUserId(Integer, Integer)             归属校验用（★ 不是 findById）
+    ✅ findByIdAndUserIdAndDeleted(Integer, Integer, Integer)  归属校验用
+                                                       （★ 不是 findById；
+                                                         2026-10-14 dc8f67a 由
+                                                         findByIdAndUserId 改名而来）
     ✅ findByUserIdAndDeleted(Integer, Integer, Pageable)   recent_read / recent_add
     ✅ findPageOrderByNovelUpdate(Integer, Pageable)   ★ 原生 SQL + countQuery
     ✅ softDeleteByIds(List, Integer, LocalDateTime)   ★ 一次 UPDATE，天然免疫越权
@@ -135,14 +145,17 @@
     · ⚠ 查询方法未加 @Transactional(readOnly = true)（编码约定里有这一条）
 
   【接口 3：PUT /bookshelf/{id}/top】✅
-    · 归属校验用 findByIdAndUserId ✅（不是 findById）
+    · 归属校验用 findByIdAndUserIdAndDeleted ✅（不是 findById）
     · top=false 时 topTime 清成 null ✅（落实设计文档 3.3 的 v2 补充）
     · DTO 的 top 用 **Boolean**（设计文档 4.1 就是 Boolean）
-    · ⚠ 不过滤 deleted → 见问题 23
+    · 🔴 deleted 参数传成了 **1**（应为 0）→ 在架记录直接 500 → 问题 25
+    · 🟡 传对之后仍要确认：软删记录不该能被置顶 → 问题 23
 
   【接口 4：DELETE /bookshelf/{id}】✅
-    · 归属校验用 findByIdAndUserId ✅
+    · 归属校验用 findByIdAndUserIdAndDeleted ✅（但 deleted 传错，见问题 25）
     · 幂等：重复移出不报错 ✅
+    · ★ 新增：删 Redis 的 progress 进度 key（problems-24 的修法），带 try/catch
+      —— 在架记录走不到这一步（被问题 25 的 orElseThrow 挡住）
     · ★ 比设计更周全：额外清了 isTop / topTime / lastReadChapterId / lastReadTime
       ⇒ 复活时是一张"干净"的记录，不会带回旧的置顶和阅读进度
 
@@ -271,9 +284,12 @@
   【A/B/C】✅ 接口 3、4、5 已完成（2026-10-10）
        PUT /bookshelf/{id}/top · DELETE /bookshelf/{id}
        · POST /bookshelf/batch-remove
-       实现要点全部落实：findByIdAndUserId 归属校验、top_time 清 null、
+       实现要点全部落实：归属校验查询、top_time 清 null、
        softDeleteByIds 一次 UPDATE、ids 上限 100
-       ⚠ 遗留：top/remove 不过滤 deleted（问题 23）
+       🔴 2026-10-14 复核：归属校验那支查询改成了
+          findByIdAndUserIdAndDeleted(id, userId, **1**)
+          —— 1 是"已删"，应为 0 ⇒ 接口 3、4 对在架记录直接 500（问题 25）
+       ⚠ 遗留：top/remove 仍能操作软删记录（问题 23）
 
   【D】★ 下一步就是跑验收（接口都齐了，但**一条都没验过**）
        设计文档"十三、验证清单"里的 S2/S3/S4 越权测试必做。
@@ -282,15 +298,18 @@
 --------------------------------------------------------------------------------
 4.2 往后（步骤 3 尾部）
 --------------------------------------------------------------------------------
-  【E】返回值改 VO
-       当前接口 1、2 返回实体 Bookshelf，需要改成 BookshelfItemVO
-       需要先做：
-         · vo/BookshelfItemVO.java
-         · repository/NovelChapterStat.java     接口投影（COUNT 是 Long！）
-         · repository/ChapterBrief.java
-         · ChapterRepository 加两个批量查询
-         · Service 组装 3~4 次 SQL（不是 N+1）
-       坑：
+  【E】返回值改 VO  —— ★ 已部分完成（2026-10-14 dc8f67a）
+       ✅ 接口 2（列表）已改成 Result<Page<BookshelfItemVO>>
+            · vo/BookshelfItemVO.java 已建（书架字段 + 小说字段）
+            · 批量查 novel 避免 N+1（findAllById + Map）
+            · ★ 用 Page.map 映射，totalElements / totalPages 一个不丢
+       ⚠ 接口 1（加入）仍返回实体 Bookshelf —— 还没改
+       ❌ 章节统计**未做**：BookshelfItemVO 里还没有 chapterCount
+          原计划要做但还没动的：
+            · repository/NovelChapterStat.java     接口投影（COUNT 是 Long！）
+            · repository/ChapterBrief.java
+            · ChapterRepository 加两个批量查询
+       坑（做的时候会踩）：
          · COUNT(c) 返回 Long，不是 Integer
          · JPQL 别名必须和 getter 名严格对应
 
@@ -430,6 +449,16 @@
   □ {"top": 2} 之类的非法值 → 期望 body.code=500
     （已改 Boolean，Jackson 会把 2 收成 true；此条验的是"不再存进 is_top=2"）
 
+  【★ 置顶 / 移出的往返（问题 25，2026-10-14 复核新增）—— 这两条从来没跑过】
+  □ 加入一本 → PUT /bookshelf/{id}/top (top=true)
+    → 期望 body.code=200，且列表第一条是它
+    → 现在是 code=500「小说不在书架」（deleted 传成了 1）
+  □ 加入一本 → DELETE /bookshelf/{id}
+    → 期望 body.code=200，且列表里不再有它 → 现在是 code=500「书不存在」
+  □ ★ 反向探针（验判据本身）：拿一个**已移出**的 id 再调一次 remove
+    → 现在是 200（错），修好后期望 500
+  ★ 一律看 **body 的 code 字段**，不看 HTTP 状态码（RuntimeException 也返 200）
+
   【性能】
   □ 开 SQL 日志，书架列表 20 条 → SELECT 次数 ≤ 4
   □ 本地响应时间 < 500ms
@@ -471,9 +500,11 @@
     · 我这轮给的 3 个点（top 过滤 deleted / Boolean / 测试）→ 修了 1 个
 
   【技术债】
-    · 接口 1、2 目前返回实体 Bookshelf，不是 VO —— 步骤 3 尾部统一改
+    · 接口 1（加入）目前返回实体 Bookshelf，不是 VO —— 接口 2 已改（dc8f67a）
+    · 章节统计未做（BookshelfItemVO 里没有 chapterCount）
     · 查询方法缺 @Transactional(readOnly = true)
-    · top()/remove() 不过滤 deleted（问题 23）
+    · top()/remove() 不过滤 deleted（问题 23，未修好）
+    · 🔴 top()/remove() 的 deleted 参数传成 1（问题 25，新回归）★ 最优先
     · 5 个接口 0 测试
     · 单机锁 locks Map 只增不减（NovelServiceIml）—— 与本轮无关，记录在案
     · dev 库是 update 模式"长出来的"，只存在硬盘 —— 长期方案 Flyway
@@ -505,12 +536,15 @@
     5. ★ "声明 ≠ 落地" —— 实体里写了约束，不等于库里有了。
        ORM 的自动建表只管"新建表那一刻"，改已有表一律不补。
 
-  【待补的协作动作】
-    · 待修：唯一约束 uk_bookshelf_user_novel（问题 21）★ 最优先
-    · 待修：schema.sql 补 bookshelf 表（问题 20 残留）
-    · 待定：路径单复数二选一
+  【待补的协作动作】（2026-10-14 复核后重排）
+    ✅ 已补：唯一约束 uk_bookshelf_user_novel（问题 21，2026-10-10 关闭）
+    ✅ 已补：schema.sql 补 bookshelf 表（问题 20，2026-10-13 b6b44d6 关闭）
+    ✅ 已定：路径单复数 → 单数 /bookshelf（问题 22，2026-10-10 关闭）
+    🔴 待修：top/remove 的 deleted 传成 1（问题 25）★ 最优先，挡着两个接口
+    ⚠ 待确认：修 25 时把 deleted 改成 0 —— 顺手验证问题 23 是否真的没了
     · 待跑：接口 1 的验收（body.code=200 + 库里 author="佚名"）
     · 待跑：接口 2 的越权验证（S2~S4）
+    · 待跑：置顶 / 移出的往返验证（☆ 新：这两个接口从没跑过）
     · 待跑：./mvnw test 连跑两遍
 
 

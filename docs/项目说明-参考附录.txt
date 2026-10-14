@@ -24,7 +24,7 @@
   附 A、目录结构
 ################################################################################
 
-  后端（src/main/java/com/example2/demo2/，实测 49 个类）
+  后端（src/main/java/com/example2/demo2/，实测 50 个类）
 
   ├── Demo2Application.java            启动类（★ 已加 @EnableScheduling，定时任务要用）
   │
@@ -84,13 +84,15 @@
   │   ├── NovelRepository.java         ★ JpaRepository + JpaSpecificationExecutor
   │   ├── NovelSpecifications.java     ★ 动态查询条件构造器
   │   ├── BookshelfRepository.java     ★ 6 个方法：
-  │   │                                  findByUserIdAndNovelId / findByIdAndUserId
+  │   │                                  findByUserIdAndNovelId / findByIdAndUserIdAndDeleted
   │   │                                  / findByUserIdAndDeleted
   │   │                                  / findPageOrderByNovelUpdate（原生 SQL）
   │   │                                  / softDeleteByIds（批量软删，防越权）
   │   │                                  / updateProgressFromRedis（定时刷回，幂等）
-  │   │                                  ⚠ findByIdAndUserId **不带 deleted 条件**
-  │   │                                    ⇒ 问题 23 的根因就在这
+  │   │                                  ★ 旧的无条件查询 findByIdAndUserId 已删除
+  │   │                                    （2026-10-14 dc8f67a，修问题 23 的方向）
+  │   │                                  ⚠⚠ 但 top()/remove() 调用时把最后一个参数
+  │   │                                    传成了 1（0 才是"存在"）⇒ 见问题清单 25，未修
   │   ├── ChapterRepository.java       findByNovelIdOrderByChapterNumberAsc 等
   │   └── UserRepository.java          findByUsername
   │
@@ -117,6 +119,10 @@
   └── vo/                              出参
       ├── NovelDetailVO                详情 + 章节目录（★ 不带正文）
       ├── NovelRankVO                  排行榜条目
+      ├── BookshelfItemVO              ★ 书架条目 = 书架字段 + 小说字段
+      │                                  （2026-10-14 dc8f67a 新增）
+      │                                  ★ 分页用 Page.map 映射，保住 totalElements/totalPages
+      │                                  ⚠ 还没有章节统计字段（chapterCount）
       └── LoginVO                      token / refreshToken / userInfo
 
   前端（novel-frontend/，实测 17 个 .vue + 2 个组合式函数）
@@ -305,7 +311,9 @@
             SCAN（不是 KEYS）+ Cursor try-with-resources
             + WHERE (lastReadTime IS NULL OR lastReadTime < :readTime) 幂等
     · 为什么先写 Redis 不写 DB：快速翻页会打 10+ 次 UPDATE
-    · ⚠ 移出书架时**没有删这个 key** → 见问题 24
+    · ⚠ 移出书架时**没删这个 key** → 见问题 24
+      ★ 2026-10-14：remove() 里补上了 delete(progress:...)，带 try/catch
+        —— 但对**在架**记录走不到（被问题 25 的 orElseThrow 挡住）
 
   【Spring Cache 用的 key】（两个缓存区）
     ------------------------------------------------------------------

@@ -15,21 +15,26 @@
                   + composables/（useAuth / usePagination）
                   + styles/tokens.css 设计变量 + SiteHeader 公共导航
                     ⚠ SiteHeader 目前只接了首页，其余 8 个页面待接
-        规模 49 类 / 2806 行 / 21 个 REST 接口 / 17 个 .vue
+        规模 50 类 / 2905 行 / 21 个 REST 接口 / 17 个 .vue
+        （口径：find src/main/java -name "*.java"，与旧数字同口径）
 
-  活跃：🟡 23  top/remove 不过滤 deleted —— 软删记录还能被置顶
-        🟡 24  remove() 没删 Redis 的 progress:* —— 复活后旧进度被写回
+  活跃：🔴 25  top/remove 传了 deleted=1 → 在架记录**置顶/移出全 500**
+                ★ 新回归：dc8f67a 修 23 时带出来的，只差一个字符
+        🟡 23  top/remove 不过滤 deleted —— 软删记录还能被置顶（★ 并未修好）
+        🟡 24  remove() 没删 Redis 的 progress:* —— 代码加了，但被 25 挡住、走不到
         🟡    防击穿 locks Map 只增不减（无界增长）
         → 全文见 docs/项目笔记/问题清单.txt
 
   ✅ 已清：20  schema.sql 编码 UTF-16LE（2026-10-13 提交 b6b44d6）
 
   下一步（按顺序）：
-        1. 修 23 / 24（各 1~3 行）
-        2. 跑 docker 故障演练（问题 20 已清，不再挡这一步）
-        3. 跑验收：步骤 4 游客回归 + 步骤 5 幂等 + 越权 4 条
-        4. ./mvnw test 连跑两遍（readChapter 动过了）
-        5. 返回值改 BookshelfItemVO（步骤 3 的尾巴）了
+        1. ★ 修 25（1 个字符：deleted 参数 1 → 0）—— 它砸的是置顶/移出两个接口
+        2. 25 修完后，23 / 24 的判据才有机会真正跑到
+        3. 跑 docker 故障演练（问题 20 已清，不再挡这一步）
+        4. 跑验收：步骤 4 游客回归 + 步骤 5 幂等 + 越权 4 条
+        5. ./mvnw test 连跑两遍（readChapter 动过了）
+  ✅ 已完成：返回值改 BookshelfItemVO（步骤 3 尾巴，dc8f67a）
+            列表接口已改（Result<Page<BookshelfItemVO>>）；加入接口仍返实体 Bookshelf
 
   ★ 详细进度 → docs/项目笔记/14-书架系统.txt
   ★ 改动前必读 → AGENTS.md（关键设计决策 + 红线）
@@ -96,7 +101,7 @@
   ★ 这四份"字典"统一放在一份文件里，本文件**不再放副本**：
 
         docs/项目说明-参考附录.txt
-          附 A  目录结构     后端 49 类 + 前端 16 组件 + 2 组合式函数
+          附 A  目录结构     后端 50 类 + 前端 17 个 .vue + 2 组合式函数
           附 B  数据模型     4 张表 + 索引 + 字段说明
           附 C  接口清单     21 个接口（路径 / 权限 / 限流）
           附 D  Redis Key    8 个业务 key + Spring Cache 2 个缓存区
@@ -286,7 +291,8 @@
           ★ 2026-10-10：**书架系统 5 步全部走完**
             5 个接口 ✅ + 阅读进度（Redis 暂存 + 定时刷回 DB）✅
             → 见 docs/项目笔记/14-书架系统.txt
-            剩下：返回值改 VO + 章节统计
+            返回值改 VO ✅（2026-10-14 dc8f67a，列表接口）
+            剩下：章节统计（BookshelfItemVO 里还没有 chapterCount 字段）
                   （前端 MyShelf.vue 已接上）
             ✅ 前置：schema.sql 编码问题 20 已修（2026-10-13）
     □ P3  微服务拆分（★ 不建议现在做）

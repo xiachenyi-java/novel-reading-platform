@@ -140,7 +140,7 @@ public class BookshelfServiceIml implements IBookshelfService {
     @Transactional(rollbackFor = Exception.class)
     @Override
     public void top(Integer userId, Integer BookshelfId, Boolean isTop) {
-        Bookshelf bookshelf = bookshelfRepository.findByIdAndUserIdAndDeleted(BookshelfId, userId,1)
+        Bookshelf bookshelf = bookshelfRepository.findByIdAndUserIdAndDeleted(BookshelfId, userId,0)
                 .orElseThrow(() -> new BusinessException("小说不在书架"));
         bookshelf.setIsTop(isTop ? 1 : 0);
         if (bookshelf.getIsTop() == 0) {
@@ -157,7 +157,7 @@ public class BookshelfServiceIml implements IBookshelfService {
     @Transactional(rollbackFor = Exception.class)
     @Override
     public void remove(Integer userId, Integer BookshelfId) {
-        Bookshelf bookshelf = bookshelfRepository.findByIdAndUserIdAndDeleted(BookshelfId, userId,1)
+        Bookshelf bookshelf = bookshelfRepository.findByIdAndUserIdAndDeleted(BookshelfId, userId,0)
                 .orElseThrow(() -> new BusinessException("书不存在"));
         //先删数据库
         bookshelf.setDeleted(1);
@@ -184,14 +184,35 @@ public class BookshelfServiceIml implements IBookshelfService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void batchRemove(Integer userId, List<Integer> ids) {
-        int affected = bookshelfRepository.softDeleteByIds(
-                ids,
-                userId,
-                LocalDateTime.now());
+        if (ids == null || ids.isEmpty()) {
+            return;
+        }
 
-        if(affected < ids.size()){
+        // 1. 先查出本次要移出的书架记录对应的 novelId（必须在 UPDATE 之前查）
+        List<Integer> novelIds = bookshelfRepository
+                .findByIdInAndUserIdAndDeleted(ids, userId, 0)
+                .stream()
+                .map(Bookshelf::getNovelId)
+                .distinct()
+                .toList();
+
+        // 2. 软删除
+        int affected = bookshelfRepository.softDeleteByIds(ids, userId, LocalDateTime.now());
+        if (affected < ids.size()) {
             log.info("批量移出部分成功：请求 {} 条，实际移出 {} 条（其余为他人记录/已移出/不存在）",
                     ids.size(), affected);
+        }
+
+        // 3. 清 Redis 进度缓存，失败降级忽略（跟 remove() 一个策略）
+        if (!novelIds.isEmpty()) {
+            try {
+                List<String> keys = novelIds.stream()
+                        .map(nid -> "progress:" + userId + ":" + nid)
+                        .toList();
+                stringRedisTemplate.delete(keys);
+            } catch (Exception e) {
+                log.warn("批量清进度缓存失败，忽略。userId={}, novelIds={}", userId, novelIds, e);
+            }
         }
     }
 

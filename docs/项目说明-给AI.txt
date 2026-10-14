@@ -48,8 +48,9 @@
   个人学习项目 / 简历项目。目标不是上线运营，是把 Java 后端知识点串成线。
 
 【规模】（2026-10-14 实测核实；旧文档里的 37/2000/19/9 都是错的）
-  · 后端：49 个 Java 类，2806 行代码，21 个 REST 接口
-          （口径：find src/main/java -name "*.java"，与旧数字同口径）
+  · 后端：50 个 Java 类，2905 行代码，21 个 REST 接口
+          （口径：find src/main/java -name "*.java"，与旧数字同口径；
+            dc8f67a 新增 vo/BookshelfItemVO.java ⇒ 49→50 类、2806→2905 行）
   · 前端：17 个 .vue（views 13 + components 3 + App.vue）
           + composables/ 2 个组合式函数（useAuth / usePagination，2026-10-14 新增）
           + styles/tokens.css 设计变量（颜色/字号/间距/圆角，2026-10-14 新增）
@@ -66,8 +67,12 @@
   步骤 1  Novel 加 author             ✅
   步骤 2  Bookshelf 实体 + Repository ✅（唯一约束已补进库）
   步骤 3  Service + Controller        ✅ 5/5 接口全通
-                                       ⚠ 尾巴：返回值仍是实体 Bookshelf，
-                                         不是 BookshelfItemVO
+                                       返回值改 VO：列表接口 ✅ 已是
+                                       Result<Page<BookshelfItemVO>>（dc8f67a）；
+                                       加入接口仍返回实体 Bookshelf
+                                       ⚠ 遗留：还没做章节统计（占位见 14-书架系统 §4.2）
+  ⚠⚠ 未修：🔴 25 top/remove 传了 deleted=1 → 在架记录置顶/移出全 500
+          （dc8f67a 修问题 23 时带出的回归，详见问题清单条目 25）
   步骤 4  readChapter 写 Redis 进度   ✅（含游客判空）
   步骤 5  定时任务刷回 DB             ✅（ProgressFlushTask）
 
