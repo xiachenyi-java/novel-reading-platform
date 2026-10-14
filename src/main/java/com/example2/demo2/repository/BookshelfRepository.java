@@ -19,7 +19,7 @@ public interface BookshelfRepository extends JpaRepository<Bookshelf, Integer> {
     Optional<Bookshelf> findByUserIdAndNovelId(Integer userId, Integer novelId);
 
     //归属逻辑，必须带用户，防越权
-    Optional<Bookshelf> findByIdAndUserId(Integer id, Integer userId);
+    Optional<Bookshelf> findByIdAndUserIdAndDeleted(Integer id, Integer userId,Integer deleted);
 
     //分页，最近阅读和最近增加两种排序共用
     Page<Bookshelf> findByUserIdAndDeleted(Integer userId, Integer deleted, Pageable pageable);

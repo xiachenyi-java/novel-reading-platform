@@ -2,6 +2,7 @@ package com.example2.demo2.service.Iservice;
 
 import com.example2.demo2.entity.Bookshelf;
 import com.example2.demo2.enums.BookshelfSort;
+import com.example2.demo2.vo.BookshelfItemVO;
 import org.springframework.data.domain.Page;
 
 import java.util.List;
@@ -16,7 +17,7 @@ public interface IBookshelfService {
     Bookshelf addBookshelf(Integer userId, Integer novelId);
 
     // 2.书架列表
-    Page<Bookshelf> findPageBookshelf(Integer userId,int page, int size, BookshelfSort sort);
+    Page<BookshelfItemVO> findPageBookshelf(Integer userId, int page, int size, BookshelfSort sort);
 
     // 3。置顶和取消置顶
     void top(Integer userId, Integer BookshelfId, Boolean isTop);

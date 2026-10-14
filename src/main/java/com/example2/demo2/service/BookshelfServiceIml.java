@@ -2,10 +2,12 @@ package com.example2.demo2.service;
 
 import com.example2.demo2.common.exception.BusinessException;
 import com.example2.demo2.entity.Bookshelf;
+import com.example2.demo2.entity.Novel;
 import com.example2.demo2.enums.BookshelfSort;
 import com.example2.demo2.repository.BookshelfRepository;
 import com.example2.demo2.repository.NovelRepository;
 import com.example2.demo2.service.Iservice.IBookshelfService;
+import com.example2.demo2.vo.BookshelfItemVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -21,6 +23,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * 夏辰义
@@ -67,26 +71,76 @@ public class BookshelfServiceIml implements IBookshelfService {
 
     //书架列表
     @Override
-    public Page<Bookshelf> findPageBookshelf(Integer userId, int page, int size, BookshelfSort sort) {
-        int pageIndex = page - 1;//分页换算
+    public Page<BookshelfItemVO> findPageBookshelf(Integer userId, int page, int size, BookshelfSort sort) {
+        int pageIndex = page - 1;
 
-        //按更新时间排序
+        // ========== 1. 分页查 Bookshelf（保持你原来的逻辑，一个字不改）==========
+        Page<Bookshelf> bookshelfPage;
         if (sort == BookshelfSort.NOVEL_UPDATE) {
             Pageable pageable = PageRequest.of(pageIndex, size);
-            return bookshelfRepository.findPageOrderByNovelUpdate(userId, pageable);
+            bookshelfPage = bookshelfRepository.findPageOrderByNovelUpdate(userId, pageable);
+        } else {
+            Sort s = buildSort(sort);
+            Pageable pageable = PageRequest.of(pageIndex, size, s);
+            bookshelfPage = bookshelfRepository.findByUserIdAndDeleted(userId, 0, pageable);
         }
 
-        Sort s = buildSort(sort);
-        Pageable pageable = PageRequest.of(pageIndex, size, s);
-        return bookshelfRepository.findByUserIdAndDeleted(userId, 0, pageable);
+        // ========== 2. 映射成 VO ==========
+        return toItemVOPage(bookshelfPage);
+    }
 
+    // ========== 分页对象批量映射 ==========
+    private Page<BookshelfItemVO> toItemVOPage(Page<Bookshelf> page) {
+        // 2.1 空页直接返回，避免多余查询
+        if (page.getContent().isEmpty()) {
+            return page.map(b -> null);   // 内容为空，返回空 VO 页
+        }
+
+        // 2.2 一次查出本页涉及的所有小说（去重后批量查，避免 N+1）
+        List<Integer> novelIds = page.getContent().stream()
+                .map(Bookshelf::getNovelId)
+                .distinct()
+                .toList();
+
+        Map<Integer, Novel> novelMap = novelRepository.findAllById(novelIds).stream()
+                .collect(Collectors.toMap(Novel::getId, Function.identity()));
+
+        // 2.3 用 Page.map 保留分页元信息（totalElements / totalPages 都不丢）
+        return page.map(b -> toItemVO(b, novelMap.get(b.getNovelId())));
+    }
+
+    // ========== 单条映射 ==========
+    private BookshelfItemVO toItemVO(Bookshelf b, Novel n) {
+        BookshelfItemVO vo = new BookshelfItemVO();
+
+        // 书架字段
+        vo.setId(b.getId());
+        vo.setTop(b.getIsTop() != null && b.getIsTop() == 1);   // 0/1 → boolean
+        vo.setTopTime(b.getTopTime());
+        vo.setLastReadChapterId(b.getLastReadChapterId());
+        vo.setLastReadTime(b.getLastReadTime());
+        vo.setCreateTime(b.getCreateTime());
+
+        // 小说字段（小说可能已被删除，用 null 兜底）
+        vo.setNovelId(b.getNovelId());     // ← 这个永远有，来自书架记录
+        if (n != null) {
+            vo.setTitle(n.getTitle());
+            vo.setAuthor(n.getAuthor());
+            vo.setCoverUrl(n.getCoverUrl());
+            vo.setCategory(n.getCategory());
+            vo.setStatus(n.getStatus());
+            vo.setTotalWords(n.getTotalWords());
+            vo.setLastUpdateTime(n.getLastUpdateTime());
+        }
+
+        return vo;
     }
 
     //置顶
     @Transactional(rollbackFor = Exception.class)
     @Override
     public void top(Integer userId, Integer BookshelfId, Boolean isTop) {
-        Bookshelf bookshelf = bookshelfRepository.findByIdAndUserId(BookshelfId, userId)
+        Bookshelf bookshelf = bookshelfRepository.findByIdAndUserIdAndDeleted(BookshelfId, userId,1)
                 .orElseThrow(() -> new BusinessException("小说不在书架"));
         bookshelf.setIsTop(isTop ? 1 : 0);
         if (bookshelf.getIsTop() == 0) {
@@ -103,12 +157,25 @@ public class BookshelfServiceIml implements IBookshelfService {
     @Transactional(rollbackFor = Exception.class)
     @Override
     public void remove(Integer userId, Integer BookshelfId) {
-        Bookshelf bookshelf = bookshelfRepository.findByIdAndUserId(BookshelfId, userId).orElseThrow(() -> new BusinessException("书不存在"));
+        Bookshelf bookshelf = bookshelfRepository.findByIdAndUserIdAndDeleted(BookshelfId, userId,1)
+                .orElseThrow(() -> new BusinessException("书不存在"));
+        //先删数据库
         bookshelf.setDeleted(1);
         bookshelf.setIsTop(0);
         bookshelf.setTopTime(null);
         bookshelf.setLastReadChapterId(null);
         bookshelf.setLastReadTime(null);
+
+        //再删缓存
+        try {
+            String progressKey = "progress:" + userId + ":" + bookshelf.getNovelId();
+            stringRedisTemplate.delete(progressKey);
+        } catch (Exception e) {
+            // Redis 抖动不该影响「移出书架」这个主流程
+            log.warn("清进度缓存失败，忽略。userId={}, novelId={}",
+                    userId, bookshelf.getNovelId(), e);
+        }
+
         bookshelfRepository.save(bookshelf);
 
     }

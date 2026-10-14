@@ -8,6 +8,7 @@ import com.example2.demo2.dto.BookshelfTopDTO;
 import com.example2.demo2.entity.Bookshelf;
 import com.example2.demo2.enums.BookshelfSort;
 import com.example2.demo2.service.Iservice.IBookshelfService;
+import com.example2.demo2.vo.BookshelfItemVO;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -39,9 +40,9 @@ public class BookshelfController {
 
     @Operation(summary = "书架列表")
     @GetMapping
-    public Result<Page<Bookshelf>> listBookshelf(@RequestParam(defaultValue = "1")   Integer page,
-                                                 @RequestParam(defaultValue = "10")   Integer size,
-                                                 @RequestParam(defaultValue = "RECENT_READ")  BookshelfSort sort){
+    public Result<Page<BookshelfItemVO>> listBookshelf(@RequestParam(defaultValue = "1")   Integer page,
+                                                       @RequestParam(defaultValue = "10")   Integer size,
+                                                       @RequestParam(defaultValue = "RECENT_READ")  BookshelfSort sort){
         if (page < 1)  {page = 1;}
         if (size < 1)  {size = 10;}
         if (size > 100) {size = 100;}
