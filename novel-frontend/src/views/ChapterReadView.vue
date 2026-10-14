@@ -28,7 +28,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { readChapter, getNovelDetail } from '../api/novel'
@@ -36,23 +36,21 @@ import { readChapter, getNovelDetail } from '../api/novel'
 const route = useRoute()
 const router = useRouter()
 
-const novelId = Number(route.params.novelId)
-const chapterId = Number(route.params.chapterId)
+// ★ computed：路由参数变了要跟着变。
+//   原来的 const 是死值，从 /chapters/1 跳到 /chapters/2 时不会更新。
+const novelId = computed(() => Number(route.params.novelId))
+const chapterId = computed(() => Number(route.params.chapterId))
 
 const chapter = ref(null)
 const loading = ref(false)
-
-// 小说标题
 const novelTitle = ref(route.query.novelTitle || '小说')
-
-// 章节列表：优先从 history.state 拿（快速渲染），
-// 但无论如何都会自己拉一次完整列表，保证刷新后上下章仍可用
 const chapters = ref([])
 
 // ===== 拉取章节列表 =====
 const fetchChapterList = async () => {
+  if (!novelId.value) return
   try {
-    const res = await getNovelDetail(novelId)
+    const res = await getNovelDetail(novelId.value)
     const data = res.data.data || res.data
     const list =
       data.chapters ||
@@ -69,27 +67,38 @@ const fetchChapterList = async () => {
 
 // ===== 拉取章节正文 =====
 const fetchChapter = async () => {
-  if (!novelId || !chapterId) return
+  if (!novelId.value || !chapterId.value) return
   loading.value = true
   try {
-    const res = await readChapter(novelId, chapterId)
+    const res = await readChapter(novelId.value, chapterId.value)
     const data = res.data.data || res.data
     chapter.value = data
-    // 顺便更新一下标题（如果后端返回了 novelTitle）
     if (data.novelTitle) {
       novelTitle.value = data.novelTitle
     }
   } catch (error) {
     console.error('加载章节失败:', error)
     ElMessage.error('加载章节失败')
+    chapter.value = null
   } finally {
     loading.value = false
   }
 }
 
+// ===== ★ 从当前路由信息初始化页面（首次进入 + 切章都走这里）=====
+const initFromRoute = async () => {
+  if (route.query.novelTitle) {
+    novelTitle.value = route.query.novelTitle
+  }
+  if (history.state?.chapters) {
+    chapters.value = history.state.chapters
+  }
+  await fetchChapter()
+}
+
 // ===== 上下章计算 =====
 const currentIndex = computed(() => {
-  return chapters.value.findIndex(c => c.id === chapterId)
+  return chapters.value.findIndex(c => c.id === chapterId.value)
 })
 const hasPrev = computed(() => currentIndex.value > 0)
 const hasNext = computed(() => currentIndex.value >= 0 && currentIndex.value < chapters.value.length - 1)
@@ -98,7 +107,7 @@ const prevChapter = () => {
   if (hasPrev.value) {
     const prev = chapters.value[currentIndex.value - 1]
     router.push({
-      path: `/novels/${novelId}/chapters/${prev.id}`,
+      path: `/novels/${novelId.value}/chapters/${prev.id}`,
       query: { novelTitle: novelTitle.value },
       state: { chapters: chapters.value }
     })
@@ -109,22 +118,36 @@ const nextChapter = () => {
   if (hasNext.value) {
     const next = chapters.value[currentIndex.value + 1]
     router.push({
-      path: `/novels/${novelId}/chapters/${next.id}`,
+      path: `/novels/${novelId.value}/chapters/${next.id}`,
       query: { novelTitle: novelTitle.value },
       state: { chapters: chapters.value }
     })
   }
 }
 
+// ===== 首次进入 =====
 onMounted(async () => {
-  // 先吃 history.state 里的快速数据（如果有）
-  if (history.state?.chapters) {
-    chapters.value = history.state.chapters
-  }
-  // 无论有没有 state，都自己拉一次，保证刷新后可用
+  await initFromRoute()
   await fetchChapterList()
-  await fetchChapter()
 })
+
+// ===== ★ 监听 chapterId 变化：同路由参数变化时组件会被复用，onMounted 不再触发 =====
+watch(
+  () => chapterId.value,
+  async () => {
+    chapter.value = null
+    await initFromRoute()
+  }
+)
+
+// ===== ★ 监听 novelId 变化：从一本书跳到另一本书时重拉章节列表 =====
+watch(
+  () => novelId.value,
+  async () => {
+    chapters.value = []
+    await fetchChapterList()
+  }
+)
 </script>
 
 <style scoped>

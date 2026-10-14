@@ -8,9 +8,9 @@
           <span class="page-title">我的书架</span>
         </div>
         <div class="header-right">
-          <span class="welcome">欢迎回来，{{ getStorage('username') || '读者' }}</span>
+          <span class="welcome">欢迎回来，{{ username }}</span>
           <el-button size="small" @click="$router.push('/')">← 返回书城</el-button>
-          <el-button type="danger" size="small" @click="logout">退出</el-button>
+          <el-button type="danger" size="small" @click="handleLogout">退出</el-button>
         </div>
       </div>
     </header>
@@ -145,9 +145,10 @@
           v-model:current-page="page"
           v-model:page-size="size"
           :total="total"
-          :page-sizes="[10, 20, 30]"
+          :page-sizes="pageSizes"
           layout="total, sizes, prev, pager, next"
-          @change="loadList"
+          @current-change="handleCurrentChange"
+          @size-change="handleSizeChange"
         />
       </div>
     </div>
@@ -155,7 +156,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
@@ -166,26 +167,65 @@ import {
   batchRemoveFromBookshelf
 } from '../api/bookshelf'
 import { getNovelDetail } from '../api/novel'
+import { usePagination } from '../composables/usePagination'
+import { useAuth } from '../composables/useAuth'
 
 const router = useRouter()
-const getStorage = (key) => localStorage.getItem(key)
+
+// ★ 从 useAuth 拿 username / logout
+const { username, logout } = useAuth()
 
 // ===== 排序 tab =====
-// 注意：这三个值必须和后端 BookshelfSort 枚举一致
 const sortTabs = [
   { label: '最近阅读', value: 'RECENT_READ' },
   { label: '最近添加', value: 'RECENT_ADD' },
   { label: '最近更新', value: 'NOVEL_UPDATE' }
 ]
 
-// ===== 状态 =====
-const list = ref([])
-const loading = ref(false)
-const page = ref(1)
-const size = ref(10)
-const total = ref(0)
+// ===== 本地状态 =====
 const sort = ref('RECENT_READ')
 const selectedIds = ref([])
+
+// ===== 分页（统一逻辑）=====
+const {
+  page,
+  size,
+  total,
+  list,
+  loading,
+  pageSizes,
+  load: loadList,
+  handleCurrentChange,
+  handleSizeChange,
+  reset
+} = usePagination(
+  async (p, s) => {
+    const res = await getBookshelfList(p, s, sort.value)
+    const body = res.data
+
+    if (body.code !== 200) {
+      ElMessage.error(body.msg || '加载书架失败')
+      return { list: [], total: 0 }
+    }
+
+    const data = body.data || {}
+    return {
+      list: data.content || [],
+      total: data.totalElements || 0
+    }
+  },
+  {
+    initialSize: 10,
+    pageSizes: [10, 20, 30],
+    onError: () => ElMessage.error('加载书架失败')
+  }
+)
+
+// ===== 选中项清理 =====
+watch(list, (newList) => {
+  const currentIds = new Set(newList.map((i) => i.id))
+  selectedIds.value = selectedIds.value.filter((id) => currentIds.has(id))
+})
 
 // ===== 工具函数 =====
 const statusText = (s) => {
@@ -199,44 +239,12 @@ const statusClass = (s) => {
   return ''
 }
 
-// ===== 加载列表 =====
-const loadList = async () => {
-  loading.value = true
-  try {
-    const res = await getBookshelfList(page.value, size.value, sort.value)
-    const body = res.data
-
-    if (body.code !== 200) {
-      ElMessage.error(body.msg || '加载书架失败')
-      list.value = []
-      total.value = 0
-      return
-    }
-
-    const data = body.data || {}
-    list.value = data.content || []
-    total.value = data.totalElements || 0
-
-    // 刷新后清掉已经不在当前页的选中项
-    const currentIds = new Set(list.value.map((i) => i.id))
-    selectedIds.value = selectedIds.value.filter((id) => currentIds.has(id))
-  } catch (e) {
-    console.error('加载书架失败:', e)
-    ElMessage.error('加载书架失败')
-    list.value = []
-    total.value = 0
-  } finally {
-    loading.value = false
-  }
-}
-
 // ===== 排序切换 =====
 const switchSort = (val) => {
   if (sort.value === val) return
   sort.value = val
-  page.value = 1
   selectedIds.value = []
-  loadList()
+  reset()
 }
 
 // ===== 选择 =====
@@ -353,10 +361,10 @@ const handleBatchRemove = () => {
 }
 
 // ===== 退出 =====
-const logout = () => {
+const handleLogout = () => {
   ElMessageBox.confirm('确定要退出登录吗？', '提示')
     .then(() => {
-      localStorage.clear()
+      logout()
       ElMessage.success('已退出登录')
       router.push('/login')
     })
@@ -374,7 +382,6 @@ onMounted(() => {
   background: #f5f7fa;
 }
 
-/* ===== 顶部导航 ===== */
 .header {
   background: white;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
@@ -420,14 +427,12 @@ onMounted(() => {
   font-size: 14px;
 }
 
-/* ===== 内容 ===== */
 .container {
   max-width: 1200px;
   margin: 0 auto;
   padding: 20px 20px 40px;
 }
 
-/* ===== 工具栏 ===== */
 .toolbar {
   display: flex;
   justify-content: space-between;
@@ -473,7 +478,6 @@ onMounted(() => {
   font-size: 13px;
 }
 
-/* ===== 状态盒子 ===== */
 .state-box {
   background: white;
   border-radius: 12px;
@@ -487,7 +491,6 @@ onMounted(() => {
   font-size: 15px;
 }
 
-/* ===== 书架列表 ===== */
 .shelf-list {
   display: flex;
   flex-direction: column;
@@ -516,7 +519,6 @@ onMounted(() => {
   margin-right: 12px;
 }
 
-/* 封面 */
 .item-cover {
   flex-shrink: 0;
   width: 72px;
@@ -551,7 +553,6 @@ onMounted(() => {
   padding: 2px 0;
 }
 
-/* 信息 */
 .item-info {
   flex: 1;
   padding: 0 20px;
@@ -611,7 +612,6 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-/* 操作 */
 .item-actions {
   flex-shrink: 0;
   display: flex;
@@ -624,14 +624,12 @@ onMounted(() => {
   margin-left: 0 !important;
 }
 
-/* 分页 */
 .pagination-box {
   display: flex;
   justify-content: center;
   margin-top: 24px;
 }
 
-/* 加载图标 */
 .is-loading {
   animation: rotate 1.5s linear infinite;
 }
@@ -640,7 +638,6 @@ onMounted(() => {
   to { transform: rotate(360deg); }
 }
 
-/* ===== 响应式 ===== */
 @media (max-width: 768px) {
   .header-inner {
     flex-direction: column;

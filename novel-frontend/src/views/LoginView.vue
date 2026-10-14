@@ -128,7 +128,7 @@
             </div>
           </el-form>
 
-          <!-- 手机登录（占位，后端未实现） -->
+          <!-- 手机登录（占位） -->
           <div v-else class="phone-placeholder">
             <div class="placeholder-icon">📱</div>
             <p>手机验证码登录功能开发中</p>
@@ -145,7 +145,6 @@
       </div>
     </main>
 
-    <!-- ===== 底部 Footer（已抽成组件）===== -->
     <SiteFooter />
   </div>
 </template>
@@ -157,9 +156,13 @@ import { User, Lock } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { login } from '../api/user'
 import SiteFooter from '../components/SiteFooter.vue'
+import { useAuth } from '../composables/useAuth'
 
 const route = useRoute()
 const router = useRouter()
+
+// ★ 从 useAuth 拿 isLogin / logout
+const { isLogin, logout } = useAuth()
 
 const username = ref('')
 const password = ref('')
@@ -209,7 +212,6 @@ const handleLogin = async () => {
 
     ElMessage.success(`欢迎回来，${userInfo.username || username.value}！`)
 
-    // 跳回来源页（守卫塞的 redirect），没有就跳首页
     const redirect = route.query.redirect || '/'
     router.push(redirect)
   } catch (error) {
@@ -232,17 +234,14 @@ const handleForget = () => {
 
 // ========== 游客 ==========
 const goGuest = () => {
-  localStorage.removeItem('token')
-  localStorage.removeItem('refreshToken')
-  localStorage.removeItem('username')
-  localStorage.removeItem('role')
+  // ★ 4 行 removeItem → 1 行 logout()
+  logout()
   router.push('/')
 }
 
 // ========== 已登录直接跳 ==========
 onMounted(() => {
-  const token = localStorage.getItem('token')
-  if (token) {
+  if (isLogin.value) {
     const redirect = route.query.redirect || '/'
     router.push(redirect)
   }
@@ -260,7 +259,6 @@ onMounted(() => {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
-/* ===== 顶部品牌栏 ===== */
 .login-header {
   background: #fff;
   border-bottom: 1px solid #f0f0f0;
@@ -307,7 +305,6 @@ onMounted(() => {
 }
 .link:hover { color: #4f46e5; }
 
-/* ===== 主体 ===== */
 .login-main {
   flex: 1;
   display: flex;
@@ -324,7 +321,6 @@ onMounted(() => {
   gap: 60px;
 }
 
-/* ===== 左侧插画 ===== */
 .illustration {
   flex: 1;
   text-align: center;
@@ -414,7 +410,6 @@ onMounted(() => {
   letter-spacing: 1px;
 }
 
-/* ===== 右侧登录卡 ===== */
 .login-card {
   flex-shrink: 0;
   width: 400px;
@@ -425,7 +420,6 @@ onMounted(() => {
   border: 1px solid #f0f0f0;
 }
 
-/* Tab */
 .tabs {
   display: flex;
   border-bottom: 1px solid #f0f0f0;
@@ -458,7 +452,6 @@ onMounted(() => {
   border-radius: 2px;
 }
 
-/* 输入框 */
 .login-form :deep(.el-form-item) {
   margin-bottom: 18px;
 }
@@ -482,7 +475,6 @@ onMounted(() => {
   font-size: 14px;
 }
 
-/* 记住我 + 忘记密码 */
 .form-row {
   display: flex;
   justify-content: space-between;
@@ -496,7 +488,6 @@ onMounted(() => {
 }
 .forget { font-size: 13px; }
 
-/* 提交按钮 */
 .submit-btn {
   width: 100%;
   height: 48px;
@@ -517,7 +508,6 @@ onMounted(() => {
   transform: translateY(0);
 }
 
-/* 底部 */
 .form-footer {
   text-align: center;
   margin-top: 20px;
@@ -529,7 +519,6 @@ onMounted(() => {
   font-weight: 500;
 }
 
-/* 协议 */
 .agreement {
   margin-top: 16px;
   padding-top: 16px;
@@ -543,7 +532,6 @@ onMounted(() => {
   font-size: 12px;
 }
 
-/* 手机登录占位 */
 .phone-placeholder {
   text-align: center;
   padding: 40px 0;
@@ -559,7 +547,6 @@ onMounted(() => {
   font-size: 14px;
 }
 
-/* 游客入口 */
 .guest-entry {
   text-align: center;
   margin-top: 8px;
@@ -573,7 +560,6 @@ onMounted(() => {
   color: #7c3aed !important;
 }
 
-/* ===== 响应式 ===== */
 @media (max-width: 900px) {
   .illustration { display: none; }
   .main-inner { justify-content: center; gap: 0; }

@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class UserServicelml implements IUserService {
+public class UserServiceIml implements IUserService {
 
     private final UserRepository userRepository;
     private final BCryptPasswordEncoder bCryptPasswordEncoder;
@@ -50,7 +50,7 @@ public class UserServicelml implements IUserService {
         }
 
         // 生成 Access Token
-        String token = jwtUtil.generateToken(user.getId(), user.getUsername(), user.getRole());
+        String Accesstoken = jwtUtil.generateToken(user.getId(), user.getUsername(), user.getRole());
 
         // 生成 Refresh Token
         String refreshToken = UUID.randomUUID().toString();
@@ -73,7 +73,7 @@ public class UserServicelml implements IUserService {
         user.setPasswordHash(null);
 
         LoginVO loginVO = new LoginVO();
-        loginVO.setToken(token);
+        loginVO.setToken(Accesstoken);
         loginVO.setRefreshToken(refreshToken);
         loginVO.setUserInfo(user);
 

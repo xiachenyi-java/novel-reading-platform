@@ -13,17 +13,17 @@
           </div>
         </div>
         <div class="header-right">
-          <span class="welcome" v-if="!getStorage('token')">游客模式 · 浏览全站</span>
-          <span class="welcome" v-else>欢迎回来，{{ getStorage('username') }}</span>
+          <span class="welcome" v-if="!isLogin">游客模式 · 浏览全站</span>
+          <span class="welcome" v-else>欢迎回来，{{ username }}</span>
 
-          <el-button v-if="getStorage('role') === 'ADMIN'" type="success" size="small" @click="goWrite">
+          <el-button v-if="isAdmin" type="success" size="small" @click="goWrite">
             ✍️ 发布新书
           </el-button>
 
-          <el-button v-if="!getStorage('token')" type="primary" size="small" @click="goLogin">登录</el-button>
+          <el-button v-if="!isLogin" type="primary" size="small" @click="goLogin">登录</el-button>
           <template v-else>
             <el-button size="small" @click="$router.push('/shelf')">📚 我的书架</el-button>
-            <el-button type="danger" size="small" @click="logout">退出</el-button>
+            <el-button type="danger" size="small" @click="handleLogout">退出</el-button>
           </template>
         </div>
       </div>
@@ -126,7 +126,7 @@
                 <span>📊 {{ novel.totalWords || 0 }} 字</span>
                 <span>📅 {{ novel.lastUpdateTime ? novel.lastUpdateTime.slice(0,10) : '未更新' }}</span>
               </div>
-              <div class="admin-actions" v-if="getStorage('role') === 'ADMIN'" @click.stop>
+              <div class="admin-actions" v-if="isAdmin" @click.stop>
                 <el-button type="danger" size="small" plain @click="handleDelete(novel.id)">
                   删除
                 </el-button>
@@ -154,7 +154,7 @@
       <p style="color:#999;margin-top:12px;">
         {{ keyword ? `没有找到与 "${keyword}" 相关的小说` : '暂无小说，敬请期待！' }}
       </p>
-      <el-button v-if="getStorage('role') === 'ADMIN'" type="primary" @click="goWrite" style="margin-top:16px;">
+      <el-button v-if="isAdmin" type="primary" @click="goWrite" style="margin-top:16px;">
         ✍️ 发布第一本书
       </el-button>
     </div>
@@ -167,10 +167,12 @@ import { useRouter } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { Loading, Search } from '@element-plus/icons-vue'
 import { getNovelList, getCategories, deleteNovel } from '../api/novel'
+import { useAuth } from '../composables/useAuth'
 
 const router = useRouter()
 
-const getStorage = (key) => localStorage.getItem(key)
+// ★ 从 useAuth 拿登录态 / 权限 / 用户名 / 退出
+const { isLogin, isAdmin, username, logout } = useAuth()
 
 const pageNum = ref(1)
 const pageSize = ref(8)
@@ -254,11 +256,13 @@ const goLogin = () => router.push('/login')
 const goWrite = () => router.push('/write')
 const goDetail = (id) => router.push(`/novels/${id}`)
 
-const logout = () => {
+// ★ 退出：从 localStorage.clear() + window.location.href（全页刷新）
+//   改成 useAuth.logout() + router.push（SPA 内跳转）
+const handleLogout = () => {
   ElMessageBox.confirm('确定要退出登录吗？', '提示').then(() => {
-    localStorage.clear()
+    logout()
     ElMessage.success('已退出登录')
-    window.location.href = '/login'
+    router.push('/login')
   }).catch(() => {})
 }
 
@@ -422,7 +426,6 @@ onMounted(() => {
   padding: 8px 0;
   margin-top: 16px;
 }
-/* 覆盖 .container 在分类导航里的样式，让它横向排列 */
 .category-nav .container {
   max-width: 1200px;
   margin: 0 auto;

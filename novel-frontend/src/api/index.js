@@ -5,19 +5,51 @@ const apiClient = axios.create({
   timeout: 10000,
 })
 
+// ============================================================
 // 请求拦截器：自动带 Token
+// ------------------------------------------------------------
+// 从 localStorage 读 token，塞进 Authorization 头。
+// 后端约定 header 格式：Bearer <token>
+//   - el-upload 那种不走 axios 实例的请求，需要自己带（见 WriteNovel.vue）
+// ============================================================
+apiClient.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('token')
+    if (token) {
+      config.headers = config.headers || {}
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error) => Promise.reject(error)
+)
+
+// ============================================================
+// 响应拦截器：统一处理 401 / 403
+// ------------------------------------------------------------
+// 401（未登录 / token 失效）：
+//   - 清掉本地凭证
+//   - 如果"本来登录着"（hadToken），跳登录页并带 redirect
+//   - 如果本来就是游客，不跳，交给页面自己处理
+//
+// 403（已登录但无权限）：
+//   - 不清凭证、不跳登录页
+//   - 直接 reject，由调用方决定怎么提示
+//   - ★ 不能把 403 当 401 处理，否则管理员权限不足会被误踢下线
+// ============================================================
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const status = error.response?.status
+
+    if (status === 401) {
       const hadToken = !!localStorage.getItem('token')
+
       localStorage.removeItem('token')
       localStorage.removeItem('refreshToken')
       localStorage.removeItem('username')
       localStorage.removeItem('role')
 
-      // 只有"本来登录着"的用户被踢下线才跳登录页
-      // 游客访问需要登录的接口，让页面自己处理，不要强跳
       if (hadToken) {
         const current = window.location.pathname + window.location.search
         if (!current.startsWith('/login')) {
@@ -25,26 +57,9 @@ apiClient.interceptors.response.use(
         }
       }
     }
-    return Promise.reject(error)
-  }
-)
 
-// 响应拦截器：统一处理 401
-apiClient.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      // ★ 改了：保留当前路径，登录后能跳回来，不再无脑跳到 /login
-      localStorage.removeItem('token')
-      localStorage.removeItem('refreshToken')
-      localStorage.removeItem('username')
-      localStorage.removeItem('role')
+    // 403 不需要额外动作，直接 reject 即可
 
-      const current = window.location.pathname + window.location.search
-      if (!current.startsWith('/login')) {
-        window.location.href = `/login?redirect=${encodeURIComponent(current)}`
-      }
-    }
     return Promise.reject(error)
   }
 )

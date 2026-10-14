@@ -62,7 +62,6 @@
             </span>
             <span class="chapter-right">
               <span class="word-count">约 {{ chapter.wordCount || 0 }} 字</span>
-              <!-- 管理员操作 -->
               <template v-if="isAdmin">
                 <el-button type="primary" size="small" link @click="openEditChapter(chapter)">
                   编辑
@@ -148,7 +147,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -157,19 +156,20 @@ import {
   addChapter,
   updateChapter,
   deleteChapter,
-  // ★ 新增：编辑章节前需要拉全文
   readChapter
 } from '../api/novel'
 import { addToBookshelf } from '../api/bookshelf'
+import { useAuth } from '../composables/useAuth'
 
 const route = useRoute()
 const router = useRouter()
 
+// ★ 从 useAuth 拿 isAdmin / requireLogin
+const { isAdmin, requireLogin } = useAuth()
+
 const novel = ref(null)
 const chapters = ref([])
 const loading = ref(false)
-
-const isAdmin = computed(() => localStorage.getItem('role') === 'ADMIN')
 
 // ====== 添加章节 ======
 const showAddChapter = ref(false)
@@ -241,10 +241,9 @@ const submitChapter = async () => {
   })
 }
 
-// ====== ★ 打开编辑对话框：先确认有正文，没有就从后端拉全文 ======
+// ====== 打开编辑对话框：先确认有正文，没有就从后端拉全文 ======
 const openEditChapter = async (chapter) => {
   let content = chapter.content || ''
-  // 目录接口通常不返回正文，如果为空，调 readChapter 拉全文
   if (!content) {
     editLoading.value = true
     try {
@@ -346,18 +345,8 @@ const startReading = () => {
 
 // ====== 加入书架 ======
 const handleAddToShelf = async () => {
-  const token = localStorage.getItem('token')
-  if (!token) {
-    ElMessageBox.confirm('请先登录再使用“加入书架”功能', '提示', {
-      confirmButtonText: '去登录',
-      cancelButtonText: '继续浏览'
-    })
-      .then(() => {
-        router.push('/login')
-      })
-      .catch(() => {})
-    return
-  }
+  // ★ 用 requireLogin 替换原来的手工弹窗
+  if (!requireLogin('使用「加入书架」')) return
 
   const novelId = route.params.id
   try {
@@ -375,17 +364,9 @@ const handleAddToShelf = async () => {
 
 // ====== 通用动作 ======
 const handleAction = (action) => {
-  const token = localStorage.getItem('token')
-  if (!token) {
-    ElMessageBox.confirm(`请先登录再使用“${action}”功能`, '提示', {
-      confirmButtonText: '去登录',
-      cancelButtonText: '继续浏览',
-    }).then(() => {
-      router.push('/login')
-    }).catch(() => {})
-    return
-  }
-  ElMessage.success(`已执行“${action}”操作（模拟）`)
+  // ★ 同上
+  if (!requireLogin(`使用「${action}」`)) return
+  ElMessage.success(`已执行「${action}」操作（模拟）`)
 }
 
 // ====== 删除小说 ======

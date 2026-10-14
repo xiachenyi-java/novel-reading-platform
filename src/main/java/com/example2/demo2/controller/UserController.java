@@ -44,7 +44,7 @@ public class UserController {
     @Operation(summary = "用户登陆")
     @RateLimit(key = "login", limit = 5, window = 60)
     @PostMapping("/login")
-    public Result<LoginVO> login(@RequestBody LoginDTO loginDTO, HttpServletRequest request) {
+    public Result<LoginVO> login(@RequestBody LoginDTO loginDTO) {
 
         return Result.success(iUserService.login(loginDTO));
     }

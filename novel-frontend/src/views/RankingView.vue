@@ -96,7 +96,7 @@
           <div class="sidebar-card" style="margin-top:16px;">
             <div class="sidebar-card-title">📚 我的书架</div>
             <div class="sidebar-card-action">
-              <el-button type="primary" size="small" @click="$router.push('/shelf')" v-if="getStorage('token')">
+              <el-button type="primary" size="small" @click="$router.push('/shelf')" v-if="isLogin">
                 查看我的书架
               </el-button>
               <el-button type="primary" size="small" @click="goLogin" v-else>
@@ -115,16 +115,17 @@ import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getRanking } from '../api/novel'
+import { useAuth } from '../composables/useAuth'
 
 const router = useRouter()
+
+// ★ 从 useAuth 拿登录态（模板里判断书架入口）
+const { isLogin } = useAuth()
 
 // ===== 数据 =====
 const rankingList = ref([])
 const loading = ref(false)
 const currentTab = ref('total')  // 'total' | 'daily'
-
-// ===== 辅助 =====
-const getStorage = (key) => localStorage.getItem(key)
 
 // ===== 更新时间 =====
 const updateTime = computed(() => {
@@ -145,7 +146,7 @@ const hotRecommends = computed(() => {
   return rankingList.value.slice(0, 5)
 })
 
-// ===== ★ 兼容不同字段命名：camelCase 优先，PascalCase 兜底 =====
+// ===== 兼容不同字段命名：camelCase 优先，PascalCase 兜底 =====
 const normalizeItem = (raw) => {
   if (!raw) return null
   return {
@@ -167,12 +168,10 @@ const switchTab = (tab) => {
 const loadRanking = async () => {
   loading.value = true
   try {
-    // ★ 改了：把 currentTab 作为第二个参数传给接口
     const res = await getRanking(20, currentTab.value)
     const data = res.data.data || res.data
     const list = Array.isArray(data) ? data : []
     rankingList.value = list.map(normalizeItem).filter(Boolean)
-    console.log(`${currentTab.value === 'total' ? '总榜' : '日榜'}数据:`, rankingList.value)
   } catch (error) {
     console.error('加载排行榜失败:', error)
     ElMessage.error('加载排行榜失败')
