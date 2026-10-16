@@ -320,26 +320,26 @@
 ################################################################################
 
   【依赖服务】
-    MySQL    localhost:3306  数据库 book_db  账号 root/123456
+    MySQL    localhost:3307  数据库 book_db  账号 root/123456
     Redis    localhost:6379  ★ 本地不一定在跑，需确认
 
-    ★★ 项目里有**两个 MySQL 实例**，别搞混（2026-10-08 实测确认）：
+    ★★ 只剩一个 MySQL 了（2026-10-16 变更，详见问题清单 26）：
       ------------------------------------------------------------------
       实例              地址              库名     角色
       ------------------------------------------------------------------
-      本机 MySQL        localhost:3306    book_db  ★ 开发权威库
-                                                  dev 配置连的就是它
-                                                  ddl-auto=update 会自动改表
-      Docker MySQL      localhost:3307    book_db  部署演练用
-      （demo2-mysql）                             prod 配置连的就是它
-                                                  结构来自 01-schema.sql
+      Docker MySQL      localhost:3307    book_db  ★ 唯一权威库
+      （demo2-mysql）                             dev 和 prod 都连它
+                                                  dev：ddl-auto=update
+                                                  prod：结构来自 01-schema.sql
       ------------------------------------------------------------------
-      ★ 两个库**完全独立，数据不互通**。本机加了列，容器里不会自动有。
-      ★ 症状：GUI 客户端能看到 author 列，docker exec demo2-mysql 查却没有
+      ★ 本机原生 MySQL(3306) 现在**无人使用** —— 建议卸载，别再用它。
+      ★ 历史留档（2026-10-08 ~ 10-16）：曾有过**两个 MySQL**
+        （本机 3306 + 容器 3307），dev 连 3306、prod 连 3307，
+        两个库完全独立、数据不互通 —— 这就是**环境漂移**的真凶。
+        症状：GUI 客户端能看到 author 列，docker exec demo2-mysql 查却没有
         ⇒ 第一反应应该是"我连的是哪个库"，而不是"改没生效"。
-        这叫**环境漂移**（environment drift）。
-      ★ 起因：application-dev.properties 写死 3306，
-              docker-compose.yml 把 mysql 映射到 3307，两处配置没人对账。
+        ★ 最坑的后果：它让 `docker compose down -v` **验证的是空气** ——
+          清掉的是没人用的那个库，schema.sql 从来没被真正验证过。
 
   【启动后端】
     ./mvnw clean compile            # 先确认能编译

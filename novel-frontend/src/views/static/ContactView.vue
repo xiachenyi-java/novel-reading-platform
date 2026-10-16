@@ -79,14 +79,14 @@ import StaticPageLayout from '../../components/StaticPageLayout.vue'
   align-items: flex-start;
   gap: 16px;
   padding: 16px 20px;
-  background: #fafaff;
-  border: 1px solid #f0edff;
+  background: #f2eefb;
+  border: 1px solid #f2eefb;
   border-radius: 10px;
   transition: all 0.2s;
 }
 .contact-item:hover {
-  border-color: #c4b5fd;
-  background: #f5f2ff;
+  border-color: #5b6b8c;
+  background: #f2eefb;
 }
 .contact-icon {
   font-size: 24px;
@@ -106,7 +106,7 @@ import StaticPageLayout from '../../components/StaticPageLayout.vue'
 .contact-value {
   font-size: 15px;
   font-weight: 600;
-  color: #7c3aed;
+  color: #6d4bd0;
   text-decoration: none;
   word-break: break-all;
 }
@@ -121,9 +121,9 @@ a.contact-value:hover {
 .back-hint {
   margin-top: 24px;
   padding: 14px 18px;
-  background: #f5f2ff;
+  background: #f2eefb;
   border-radius: 8px;
-  color: #6d28d9;
+  color: #5b3cb8;
   font-size: 13px;
 }
 </style>

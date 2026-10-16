@@ -93,8 +93,8 @@ import StaticPageLayout from '../../components/StaticPageLayout.vue'
   align-items: center;
   gap: 16px;
   padding: 16px 20px;
-  background: #fafaff;
-  border: 1px solid #f0edff;
+  background: #f2eefb;
+  border: 1px solid #f2eefb;
   border-radius: 10px;
   text-decoration: none;
   color: inherit;
@@ -102,8 +102,8 @@ import StaticPageLayout from '../../components/StaticPageLayout.vue'
   cursor: pointer;
 }
 .feedback-card:hover {
-  border-color: #c4b5fd;
-  background: #f5f2ff;
+  border-color: #5b6b8c;
+  background: #f2eefb;
   transform: translateX(2px);
 }
 .card-icon {
@@ -117,7 +117,7 @@ import StaticPageLayout from '../../components/StaticPageLayout.vue'
 .card-title {
   font-size: 15px;
   font-weight: 600;
-  color: #1a1a2e;
+  color: #1a1a1a;
   margin-bottom: 2px;
 }
 .card-desc {
@@ -126,13 +126,13 @@ import StaticPageLayout from '../../components/StaticPageLayout.vue'
 }
 .card-arrow {
   font-size: 18px;
-  color: #c4b5fd;
+  color: #5b6b8c;
   flex-shrink: 0;
 }
 
 .template-box {
-  background: #fafafa;
-  border: 1px dashed #e5e7eb;
+  background: #faf9f7;
+  border: 1px dashed #ececea;
   border-radius: 8px;
   padding: 16px 20px;
   margin: 12px 0 20px;
@@ -147,15 +147,15 @@ import StaticPageLayout from '../../components/StaticPageLayout.vue'
   margin-bottom: 0;
 }
 .template-line strong {
-  color: #7c3aed;
+  color: #6d4bd0;
 }
 
 .thanks {
   margin-top: 28px;
   padding: 14px 18px;
-  background: linear-gradient(135deg, #f5f2ff, #ede9fe);
+  background: linear-gradient(135deg, #f2eefb, #ede9fe);
   border-radius: 8px;
-  color: #6d28d9;
+  color: #5b3cb8;
   font-size: 13px;
   text-align: center;
 }

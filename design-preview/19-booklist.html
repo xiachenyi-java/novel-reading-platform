@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>书单页 · 策展版</title>
+<style>
+/* =========================================================================
+   书单页 · 重新想过的版本
+   --------------------------------------------------------------------------
+   思路变化：书城已经是"货架"（按分类找），书单就不该再是货架 —— 它是**策展**。
+   所以书单卡做成「**先看到里面装了哪几本书**」：顶部一条封面带，下面才是标题/导语/谁整理的。
+   另外加了「推荐单 / 避雷单」的极性 —— 把避雷这个特色也带进书单。
+   ========================================================================= */
+:root{
+  --ink:#1a1a1a; --ink-2:#565656; --ink-3:#9a9a9a; --ink-4:#c2c2c2;
+  --line:#ececea; --line-2:#f4f3f1;
+  --bg:#faf9f7; --surface:#fff;
+  --brand:#6d4bd0;
+  --rec:#2f8f6f; --rec-bg:#eaf4f0;
+  --warn:#b0702a; --warn-bg:#f7efe4;
+  --r:12px; --r-sm:8px;
+  --sh:0 1px 2px rgba(20,20,20,.04), 0 8px 24px rgba(20,20,20,.05);
+  --sh-hover:0 2px 6px rgba(20,20,20,.06), 0 16px 40px rgba(20,20,20,.10);
+  --container:1120px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,sans-serif;
+  background:var(--bg);color:var(--ink);font-size:14px;line-height:1.7;-webkit-font-smoothing:antialiased;}
+a{color:inherit;text-decoration:none;}
+.container{max-width:var(--container);margin:0 auto;padding:0 24px;}
+
+.header{background:#fff;border-bottom:1px solid var(--line);height:60px;position:sticky;top:0;z-index:100;}
+.header-inner{max-width:var(--container);height:100%;margin:0 auto;padding:0 24px;display:flex;align-items:center;gap:34px;}
+.brand-name{font-size:19px;font-weight:700;letter-spacing:.5px;white-space:nowrap;}
+.brand-name b{color:var(--brand);}
+.nav{display:flex;gap:26px;}
+.nav a{font-size:14px;color:var(--ink-2);transition:color .2s;white-space:nowrap;}
+.nav a:hover{color:var(--brand);}
+.nav a.on{color:var(--ink);font-weight:600;}
+.right{margin-left:auto;}
+.search{display:flex;width:230px;border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden;}
+.search input{flex:1;border:none;outline:none;padding:8px 12px;font-size:13px;background:transparent;}
+.search button{border:none;background:var(--bg);color:var(--ink-2);padding:0 14px;cursor:pointer;font-size:13px;border-left:1px solid var(--line);}
+
+/* 页头 */
+.head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding:38px 0 18px;}
+.head h1{font-size:27px;font-weight:700;letter-spacing:.5px;}
+.head p{font-size:14px;color:var(--ink-3);margin-top:8px;}
+.btn-new{background:var(--ink);color:#fff;border:none;border-radius:var(--r-sm);padding:11px 24px;
+  font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap;transition:opacity .2s;}
+.btn-new:hover{opacity:.85;}
+
+.chips{display:flex;gap:9px;flex-wrap:wrap;padding-bottom:22px;border-bottom:1px solid var(--line);}
+.chips a{font-size:13px;padding:6px 15px;border-radius:999px;background:#fff;color:var(--ink-2);border:1px solid var(--line);transition:all .2s;}
+.chips a:hover{border-color:var(--ink-4);color:var(--ink);}
+.chips a.on{background:var(--ink);color:#fff;border-color:var(--ink);font-weight:600;}
+
+/* ===== 本周精选（大专题）===== */
+.featured{display:flex;gap:26px;background:#fff;border-radius:var(--r);box-shadow:var(--sh);
+  padding:26px;margin:26px 0 8px;cursor:pointer;transition:box-shadow .2s;align-items:center;}
+.featured:hover{box-shadow:var(--sh-hover);}
+.featured .ftxt{flex:1;min-width:0;}
+.featured .ftag{display:inline-block;font-size:12px;letter-spacing:1px;color:var(--warn);background:var(--warn-bg);padding:3px 11px;border-radius:999px;margin-bottom:12px;}
+.featured h2{font-size:22px;font-weight:700;letter-spacing:.3px;line-height:1.45;margin-bottom:10px;}
+.featured p{font-size:14px;color:var(--ink-2);margin-bottom:14px;}
+.featured .fmeta{font-size:12.5px;color:var(--ink-3);display:flex;align-items:center;gap:8px;}
+.featured .fmeta .av{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700;}
+.featured .band{display:flex;gap:8px;flex-shrink:0;}
+.featured .band .cover{width:68px;height:96px;}
+
+/* ===== 书单卡墙 ===== */
+.wall{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:18px 0 0;}
+.bl{background:#fff;border-radius:var(--r);box-shadow:var(--sh);padding:18px 18px 16px;cursor:pointer;transition:box-shadow .2s;}
+.bl:hover{box-shadow:var(--sh-hover);}
+.bl:hover h3{color:var(--brand);}
+
+/* ★ 封面带：让"这个书单里有哪些书"一眼可见 */
+.band{display:flex;gap:7px;margin-bottom:14px;}
+.band .cover{width:46px;height:64px;border-radius:4px;}
+.band .more{width:46px;height:64px;border-radius:4px;border:1px dashed var(--ink-4);color:var(--ink-3);
+  display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;}
+
+.bl h3{font-size:16px;font-weight:700;letter-spacing:.2px;margin-bottom:7px;line-height:1.5;transition:color .2s;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.bl .desc{font-size:13px;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:12px;}
+.bl .meta{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-3);}
+.bl .meta .av{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;}
+.bl .meta .pol{margin-left:auto;font-size:11px;font-weight:600;padding:2px 9px;border-radius:999px;}
+.pol.rec{color:var(--rec);background:var(--rec-bg);}
+.pol.warn{color:var(--warn);background:var(--warn-bg);}
+
+/* 封面（低饱和）*/
+.cover{display:flex;align-items:center;justify-content:center;text-align:center;color:#fff;
+  font-size:10px;font-weight:600;line-height:1.35;letter-spacing:.4px;padding:5px;overflow:hidden;}
+.cv1{background:#5b6b8c;} .cv2{background:#7a6a7d;} .cv3{background:#6b7d6f;}
+.cv4{background:#8c7a6b;} .cv5{background:#6d6d7a;} .cv6{background:#5f7488;}
+
+.pager{display:flex;justify-content:center;gap:7px;padding:36px 0 72px;}
+.pager a{min-width:34px;height:34px;padding:0 9px;display:flex;align-items:center;justify-content:center;
+  border-radius:var(--r-sm);background:#fff;border:1px solid var(--line);color:var(--ink-2);font-size:13.5px;}
+.pager a.on{background:var(--ink);border-color:var(--ink);color:#fff;font-weight:600;}
+.pager a:hover:not(.on){border-color:var(--ink-4);color:var(--ink);}
+
+@media (max-width:900px){
+  .wall{grid-template-columns:1fr;}
+  .featured{flex-direction:column;align-items:flex-start;}
+  .search{display:none;}
+}
+@media (max-width:600px){
+  .container,.header-inner{padding:0 16px;}
+  .head{flex-direction:column;align-items:flex-start;}
+  .head h1{font-size:22px;}
+  .nav{gap:18px;}
+  .featured .band .cover{width:56px;height:80px;}
+}
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-inner">
+    <span class="brand-name"><b>书</b>潮</span>
+    <nav class="nav">
+      <a href="16-feed.html">发现</a>
+      <a href="18-store.html">书城</a>
+      <a href="19-booklist.html" class="on">书单</a>
+      <a href="#">排行榜</a>
+    </nav>
+    <div class="right"><label class="search"><input placeholder="搜书单、书、人"><button>搜索</button></label></div>
+  </div>
+</header>
+
+<div class="container">
+
+  <div class="head">
+    <div>
+      <h1>书单</h1>
+      <p>有人替你读过、挑过、编好了顺序 —— 照着读就行</p>
+    </div>
+    <button class="btn-new">＋ 创建书单</button>
+  </div>
+
+  <div class="chips">
+    <a href="#" class="on">全部</a>
+    <a href="#">推荐单</a><a href="#">避雷单</a>
+    <a href="#">入门必读</a><a href="#">完结不烂尾</a><a href="#">冷门佳作</a>
+  </div>
+
+  <!-- 本周精选 -->
+  <div class="featured">
+    <div class="ftxt">
+      <span class="ftag">本周精选 · 避雷单</span>
+      <h2>这 10 本被吹上天，其实不值得你熬夜</h2>
+      <p>按"差评提到最多的雷点"排的。烂尾、水字数、后期崩——每一本都写清了哪里开始不对劲。</p>
+      <div class="fmeta">
+        <span class="av" style="background:#8c7a6b">拾</span>
+        <span>拾光 整理 · 收录 10 本 · 被收藏 2.4 万次</span>
+      </div>
+    </div>
+    <div class="band">
+      <div class="cover cv6">深夜图书馆</div>
+      <div class="cover cv5">天咒</div>
+      <div class="cover cv2">全息玩家</div>
+      <div class="cover cv1">暗河</div>
+    </div>
+  </div>
+
+  <!-- 书单墙 -->
+  <div class="wall">
+
+    <div class="bl">
+      <div class="band">
+        <div class="cover cv1">剑起苍澜</div>
+        <div class="cover cv5">诸天签到</div>
+        <div class="cover cv2">剑烛大荒</div>
+        <div class="cover cv3">师妹魔头</div>
+        <div class="more">+8</div>
+      </div>
+      <h3>熬夜也要刷完的 10 本玄幻神作</h3>
+      <div class="desc">世界观宏大、爽点密集，从老牌经典到最近的新书都收齐了。</div>
+      <div class="meta"><span class="av" style="background:#6b7d6f">青</span><span>青衫客</span><span>·</span><span>收录 12 本</span><span class="pol rec">推荐单</span></div>
+    </div>
+
+    <div class="bl">
+      <div class="band">
+        <div class="cover cv4">大唐小地主</div>
+        <div class="cover cv4">家父汉武帝</div>
+        <div class="cover cv6">红楼织造</div>
+        <div class="cover cv1">庆余年</div>
+        <div class="more">+11</div>
+      </div>
+      <h3>历史文考据党必看</h3>
+      <div class="desc">细节扎实、不瞎编，唐朝的物价、农具、官制都能对得上。</div>
+      <div class="meta"><span class="av" style="background:#8c7a6b">拾</span><span>拾光</span><span>·</span><span>收录 15 本</span><span class="pol rec">推荐单</span></div>
+    </div>
+
+    <div class="bl">
+      <div class="band">
+        <div class="cover cv6">深夜图书馆</div>
+        <div class="cover cv5">全息玩家</div>
+        <div class="cover cv1">暗河</div>
+        <div class="cover cv2">天咒</div>
+        <div class="more">+6</div>
+      </div>
+      <h3>这 10 本，别浪费你的时间</h3>
+      <div class="desc">都是口碑不错的书，但每一本都有一个"从第几章开始崩"的坎。</div>
+      <div class="meta"><span class="av" style="background:#5b6b8c">悬</span><span>悬疑猎手</span><span>·</span><span>收录 10 本</span><span class="pol warn">避雷单</span></div>
+    </div>
+
+    <div class="bl">
+      <div class="band">
+        <div class="cover cv5">赛博2077</div>
+        <div class="cover cv6">星际矿工</div>
+        <div class="cover cv3">全息玩家</div>
+        <div class="cover cv4">山海食经</div>
+        <div class="more">+4</div>
+      </div>
+      <h3>世界观炸裂的科幻书单</h3>
+      <div class="desc">赛博朋克、星际殖民、量子纠缠，脑洞大到停不下来。</div>
+      <div class="meta"><span class="av" style="background:#6d6d7a">长</span><span>长夜未央</span><span>·</span><span>收录 8 本</span><span class="pol rec">推荐单</span></div>
+    </div>
+
+    <div class="bl">
+      <div class="band">
+        <div class="cover cv3">长生种田</div>
+        <div class="cover cv3">师妹魔头</div>
+        <div class="cover cv6">仙蜕</div>
+        <div class="cover cv5">山海食经</div>
+        <div class="more">+2</div>
+      </div>
+      <h3>甜到齁的轻松仙侠，睡前看</h3>
+      <div class="desc">没有苦大仇深，只有种田、做饭和一点小确幸。</div>
+      <div class="meta"><span class="av" style="background:#7a6a7d">半</span><span>半盏清茶</span><span>·</span><span>收录 6 本</span><span class="pol rec">推荐单</span></div>
+    </div>
+
+    <div class="bl">
+      <div class="band">
+        <div class="cover cv2">重回2008</div>
+        <div class="cover cv2">大时代</div>
+        <div class="cover cv1">重生县城</div>
+        <div class="cover cv4">重生小地主</div>
+        <div class="more">+3</div>
+      </div>
+      <h3>都市重生：回到过去当大佬</h3>
+      <div class="desc">买房、投资、抓风口，看主角一步步走上巅峰。</div>
+      <div class="meta"><span class="av" style="background:#5f7488">南</span><span>南山北</span><span>·</span><span>收录 7 本</span><span class="pol rec">推荐单</span></div>
+    </div>
+
+  </div>
+
+  <div class="pager">
+    <a href="#">‹</a><a href="#" class="on">1</a><a href="#">2</a><a href="#">3</a><a href="#">…</a><a href="#">12</a><a href="#">›</a>
+  </div>
+</div>
+
+</body>
+</html>

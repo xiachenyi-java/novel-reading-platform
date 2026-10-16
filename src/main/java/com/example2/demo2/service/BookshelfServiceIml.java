@@ -39,7 +39,7 @@ public class BookshelfServiceIml implements IBookshelfService {
 
     private final BookshelfRepository bookshelfRepository;
 
-    private final StringRedisTemplate  stringRedisTemplate;
+    private final StringRedisTemplate stringRedisTemplate;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -72,9 +72,9 @@ public class BookshelfServiceIml implements IBookshelfService {
     //书架列表
     @Override
     public Page<BookshelfItemVO> findPageBookshelf(Integer userId, int page, int size, BookshelfSort sort) {
-        int pageIndex = page - 1;
+        int pageIndex = page - 1;//从第1页开始，
 
-        // ========== 1. 分页查 Bookshelf（保持你原来的逻辑，一个字不改）==========
+        // 1. 分页查 Bookshelf
         Page<Bookshelf> bookshelfPage;
         if (sort == BookshelfSort.NOVEL_UPDATE) {
             Pageable pageable = PageRequest.of(pageIndex, size);
@@ -85,11 +85,11 @@ public class BookshelfServiceIml implements IBookshelfService {
             bookshelfPage = bookshelfRepository.findByUserIdAndDeleted(userId, 0, pageable);
         }
 
-        // ========== 2. 映射成 VO ==========
+        // 2. 映射成 VO
         return toItemVOPage(bookshelfPage);
     }
 
-    // ========== 分页对象批量映射 ==========
+    //  分页对象批量映射
     private Page<BookshelfItemVO> toItemVOPage(Page<Bookshelf> page) {
         // 2.1 空页直接返回，避免多余查询
         if (page.getContent().isEmpty()) {
@@ -99,8 +99,8 @@ public class BookshelfServiceIml implements IBookshelfService {
         // 2.2 一次查出本页涉及的所有小说（去重后批量查，避免 N+1）
         List<Integer> novelIds = page.getContent().stream()
                 .map(Bookshelf::getNovelId)
-                .distinct()
-                .toList();
+                .distinct()//去重
+                .toList();//返回list
 
         Map<Integer, Novel> novelMap = novelRepository.findAllById(novelIds).stream()
                 .collect(Collectors.toMap(Novel::getId, Function.identity()));
@@ -109,7 +109,7 @@ public class BookshelfServiceIml implements IBookshelfService {
         return page.map(b -> toItemVO(b, novelMap.get(b.getNovelId())));
     }
 
-    // ========== 单条映射 ==========
+    //  单条映射
     private BookshelfItemVO toItemVO(Bookshelf b, Novel n) {
         BookshelfItemVO vo = new BookshelfItemVO();
 
@@ -140,7 +140,7 @@ public class BookshelfServiceIml implements IBookshelfService {
     @Transactional(rollbackFor = Exception.class)
     @Override
     public void top(Integer userId, Integer BookshelfId, Boolean isTop) {
-        Bookshelf bookshelf = bookshelfRepository.findByIdAndUserIdAndDeleted(BookshelfId, userId,0)
+        Bookshelf bookshelf = bookshelfRepository.findByIdAndUserIdAndDeleted(BookshelfId, userId, 0)
                 .orElseThrow(() -> new BusinessException("小说不在书架"));
         bookshelf.setIsTop(isTop ? 1 : 0);
         if (bookshelf.getIsTop() == 0) {
@@ -157,7 +157,7 @@ public class BookshelfServiceIml implements IBookshelfService {
     @Transactional(rollbackFor = Exception.class)
     @Override
     public void remove(Integer userId, Integer BookshelfId) {
-        Bookshelf bookshelf = bookshelfRepository.findByIdAndUserIdAndDeleted(BookshelfId, userId,0)
+        Bookshelf bookshelf = bookshelfRepository.findByIdAndUserIdAndDeleted(BookshelfId, userId, 0)
                 .orElseThrow(() -> new BusinessException("书不存在"));
         //先删数据库
         bookshelf.setDeleted(1);

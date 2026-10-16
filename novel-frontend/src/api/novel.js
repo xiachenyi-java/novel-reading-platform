@@ -25,6 +25,14 @@ export const createNovel = (data) => {
   return apiClient.post('/novels', data)
 }
 
+// ===== 修改小说（管理员） =====
+// ★ 后端 PUT /novels/{id} 的入参只有 5 个字段：
+//   title / author / summary / category / coverUrl
+//   —— 没有 status（连载·完结），所以这个接口改不了作品状态
+export const updateNovel = (id, data) => {
+  return apiClient.put(`/novels/${id}`, data)
+}
+
 // ===== 删除小说（管理员） =====
 export const deleteNovel = (id) => {
   return apiClient.delete(`/novels/${id}`)

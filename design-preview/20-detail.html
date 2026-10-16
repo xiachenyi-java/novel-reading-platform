@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>书籍详情页 · 书潮</title>
+<style>
+/* =========================================================================
+   书籍详情页
+   --------------------------------------------------------------------------
+   这是「避雷」真正落地的地方。三个别人没有的东西：
+     1. AI 评分 / 读者评分 **分开显示** —— 差值本身就是内容
+     2. **雷点清单** —— 读之前先看，结构化（不是藏在低分里）
+     3. 书评和内容流用同一套卡片，人和 AI 混排
+   ========================================================================= */
+:root{
+  --ink:#1a1a1a; --ink-2:#565656; --ink-3:#9a9a9a; --ink-4:#c2c2c2;
+  --line:#ececea; --line-2:#f4f3f1;
+  --bg:#faf9f7; --surface:#fff;
+  --brand:#6d4bd0;
+  --rec:#2f8f6f; --rec-bg:#eaf4f0;
+  --warn:#b0702a; --warn-bg:#f7efe4;
+  --r:12px; --r-sm:8px;
+  --sh:0 1px 2px rgba(20,20,20,.04), 0 8px 24px rgba(20,20,20,.05);
+  --sh-hover:0 2px 6px rgba(20,20,20,.06), 0 16px 40px rgba(20,20,20,.10);
+  --container:1120px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,sans-serif;
+  background:var(--bg);color:var(--ink);font-size:14px;line-height:1.7;-webkit-font-smoothing:antialiased;}
+a{color:inherit;text-decoration:none;}
+.container{max-width:var(--container);margin:0 auto;padding:0 24px;}
+
+/* 顶栏 */
+.header{background:#fff;border-bottom:1px solid var(--line);height:60px;position:sticky;top:0;z-index:100;}
+.header-inner{max-width:var(--container);height:100%;margin:0 auto;padding:0 24px;display:flex;align-items:center;gap:34px;}
+.brand-name{font-size:19px;font-weight:700;letter-spacing:.5px;white-space:nowrap;}
+.brand-name b{color:var(--brand);}
+.nav{display:flex;gap:26px;}
+.nav a{font-size:14px;color:var(--ink-2);transition:color .2s;white-space:nowrap;}
+.nav a:hover{color:var(--brand);}
+.right{margin-left:auto;}
+.search{display:flex;width:230px;border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden;}
+.search input{flex:1;border:none;outline:none;padding:8px 12px;font-size:13px;background:transparent;}
+.search button{border:none;background:var(--bg);color:var(--ink-2);padding:0 14px;cursor:pointer;font-size:13px;border-left:1px solid var(--line);}
+
+/* 面包屑 */
+.crumb{font-size:12.5px;color:var(--ink-3);padding:22px 0 0;}
+.crumb a:hover{color:var(--brand);}
+
+/* ===== 书籍头部 ===== */
+.bh{display:flex;gap:28px;align-items:flex-start;padding:20px 0 26px;border-bottom:1px solid var(--line);}
+.bh .cover{width:168px;height:236px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  text-align:center;color:#fff;font-size:20px;font-weight:700;letter-spacing:3px;padding:18px;line-height:1.4;
+  box-shadow:0 14px 32px rgba(20,20,20,.22);}
+.bh-info{flex:1;min-width:0;}
+.bh-info h1{font-size:28px;font-weight:700;letter-spacing:.5px;margin-bottom:10px;}
+.bh-meta{font-size:13.5px;color:var(--ink-2);display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;}
+.bh-meta .sep{color:var(--ink-4);}
+.bh-meta .st{color:var(--rec);}
+.bh-desc{font-size:14.5px;color:var(--ink-2);margin-bottom:16px;max-width:640px;}
+.bh-tags{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:20px;}
+.bh-tags span{font-size:12px;padding:3px 11px;border-radius:999px;background:#fff;border:1px solid var(--line);color:var(--ink-2);}
+.bh-btn{display:flex;gap:12px;}
+.bh-btn .primary{background:var(--ink);color:#fff;border:none;border-radius:var(--r-sm);padding:11px 30px;font-size:14px;font-weight:600;cursor:pointer;}
+.bh-btn .primary:hover{opacity:.86;}
+.bh-btn .ghost{background:#fff;color:var(--ink);border:1px solid var(--line);border-radius:var(--r-sm);padding:11px 24px;font-size:14px;font-weight:600;cursor:pointer;}
+.bh-btn .ghost:hover{border-color:var(--ink-4);}
+
+/* 头部右侧评分 */
+.bh-score{width:150px;flex-shrink:0;text-align:center;padding-top:8px;}
+.bh-score .big{font-size:52px;font-weight:800;line-height:1;color:var(--ink);}
+.bh-score .stars{font-size:15px;color:var(--warn);letter-spacing:2px;margin:8px 0 6px;}
+.bh-score .cnt{font-size:12px;color:var(--ink-3);}
+
+/* ===== 主体 ===== */
+.layout{display:grid;grid-template-columns:1fr 320px;gap:30px;padding:28px 0 74px;align-items:start;}
+.sec{margin-bottom:26px;}
+.sec > h2{font-size:17px;font-weight:700;letter-spacing:.3px;margin-bottom:14px;display:flex;align-items:baseline;gap:10px;}
+.sec > h2 .hint{font-size:12px;color:var(--ink-3);font-weight:400;}
+.card{background:#fff;border-radius:var(--r);box-shadow:var(--sh);padding:20px 22px;}
+
+/* AI / 读者 评分分栏 */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px;}
+.sp{background:var(--bg);border-radius:var(--r-sm);padding:14px 16px;text-align:center;}
+.sp b{font-size:26px;font-weight:800;display:block;line-height:1.2;}
+.sp span{font-size:12px;color:var(--ink-3);}
+.sp.ai b{color:var(--brand);}
+.sp.human b{color:var(--ink);}
+.sp .note{font-size:11px;color:var(--ink-3);margin-top:4px;display:block;}
+
+/* 维度条 */
+.dims{display:flex;flex-direction:column;gap:12px;}
+.dim{display:flex;align-items:center;gap:12px;font-size:13px;}
+.dim .name{width:44px;color:var(--ink-2);flex-shrink:0;}
+.dim .bar{flex:1;height:6px;border-radius:3px;background:var(--line-2);overflow:hidden;}
+.dim .bar i{display:block;height:100%;border-radius:3px;background:var(--ink-2);}
+.dim .val{width:30px;text-align:right;font-weight:600;flex-shrink:0;}
+
+/* ★ 雷点清单 */
+.pits{background:#fff;border-radius:var(--r);box-shadow:var(--sh);padding:20px 22px;border-left:3px solid var(--warn);}
+.pit{display:flex;gap:14px;padding:13px 0;border-bottom:1px solid var(--line-2);}
+.pit:last-child{border-bottom:none;padding-bottom:2px;}
+.pit:first-of-type{padding-top:4px;}
+.pit .tag{flex-shrink:0;font-size:12px;font-weight:600;color:var(--warn);background:var(--warn-bg);padding:3px 11px;border-radius:4px;height:fit-content;}
+.pit p{font-size:13.5px;color:var(--ink-2);}
+.pit.good .tag{color:var(--rec);background:var(--rec-bg);}
+
+/* 书评卡 */
+.post{background:#fff;border-radius:var(--r);box-shadow:var(--sh);padding:18px 20px;margin-bottom:14px;cursor:pointer;transition:box-shadow .2s;}
+.post:hover{box-shadow:var(--sh-hover);}
+.post .ph{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.post .av{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;flex-shrink:0;}
+.post .nm{font-size:13.5px;font-weight:600;}
+.post .tm{font-size:12px;color:var(--ink-3);margin-left:8px;}
+.post .pol{margin-left:auto;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:999px;}
+.pol.rec{color:var(--rec);background:var(--rec-bg);}
+.pol.warn{color:var(--warn);background:var(--warn-bg);}
+.post h4{font-size:15px;font-weight:600;margin-bottom:7px;}
+.post p{font-size:13.5px;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.post .act{font-size:12px;color:var(--ink-3);display:flex;gap:18px;margin-top:10px;}
+
+/* 右栏 */
+.side{display:flex;flex-direction:column;gap:18px;}
+.scard{background:#fff;border-radius:var(--r);box-shadow:var(--sh);overflow:hidden;}
+.scard .hd{padding:14px 18px;border-bottom:1px solid var(--line-2);font-size:14px;font-weight:700;}
+.mini{display:flex;gap:11px;padding:11px 18px;}
+.mini:hover{background:var(--bg);}
+.mini .cover{width:40px;height:56px;border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  color:#fff;font-size:9.5px;font-weight:600;text-align:center;padding:4px;line-height:1.3;}
+.mini .info{min-width:0;flex:1;}
+.mini .info b{font-size:13px;font-weight:600;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mini .info span{font-size:12px;color:var(--ink-3);}
+.mini .sc{font-size:13px;font-weight:700;color:var(--ink-2);flex-shrink:0;}
+
+/* 低饱和封面色 */
+.cv1{background:#5b6b8c;} .cv2{background:#7a6a7d;} .cv3{background:#6b7d6f;}
+.cv4{background:#8c7a6b;} .cv5{background:#6d6d7a;} .cv6{background:#5f7488;}
+
+@media (max-width:900px){
+  .layout{grid-template-columns:1fr;}
+  .search{display:none;}
+}
+@media (max-width:640px){
+  .container,.header-inner{padding:0 16px;}
+  .nav{gap:18px;}
+  .bh{flex-direction:column;}
+  .bh .cover{width:120px;height:170px;font-size:15px;}
+  .bh-info h1{font-size:22px;}
+  .bh-score{width:100%;text-align:left;display:flex;align-items:baseline;gap:12px;}
+  .bh-score .big{font-size:38px;}
+  .split{grid-template-columns:1fr;}
+}
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-inner">
+    <span class="brand-name"><b>书</b>潮</span>
+    <nav class="nav">
+      <a href="16-feed.html">发现</a>
+      <a href="18-store.html">书城</a>
+      <a href="19-booklist.html">书单</a>
+      <a href="#">排行榜</a>
+    </nav>
+    <div class="right"><label class="search"><input placeholder="搜书名、作者"><button>搜索</button></label></div>
+  </div>
+</header>
+
+<div class="container">
+
+  <div class="crumb"><a href="16-feed.html">发现</a> › <a href="18-store.html">玄幻</a> › <span style="color:var(--ink-2)">剑起苍澜</span></div>
+
+  <!-- 书籍头部 -->
+  <div class="bh">
+    <div class="cover cv1">剑起苍澜</div>
+    <div class="bh-info">
+      <h1>剑起苍澜</h1>
+      <div class="bh-meta">
+        <span>青衫客 著</span><span class="sep">·</span>
+        <span>玄幻</span><span class="sep">·</span>
+        <span>128.6 万字</span><span class="sep">·</span>
+        <span class="st">连载中</span><span class="sep">·</span>
+        <span>342 章</span>
+      </div>
+      <p class="bh-desc">少年负剑入苍澜，一寸山河一寸血。剑道尽头，是漫天星辰，还是万古孤寂？一本写"剑修"的群像文，主角不是一路无敌，是真的在痛、在失去。</p>
+      <div class="bh-tags"><span>剑修</span><span>群像</span><span>不烂尾</span><span>文笔好</span></div>
+      <div class="bh-btn">
+        <button class="primary">开始阅读</button>
+        <button class="ghost">加入书架</button>
+      </div>
+    </div>
+    <div class="bh-score">
+      <div class="big">8.9</div>
+      <div class="stars">★★★★★</div>
+      <div class="cnt">1,284 人评价</div>
+    </div>
+  </div>
+
+  <div class="layout">
+    <main>
+
+      <!-- 评分：AI vs 读者 -->
+      <section class="sec">
+        <h2>评分 <span class="hint">AI 和读者的口碑，分开看</span></h2>
+        <div class="card">
+          <div class="split">
+            <div class="sp ai"><b>9.2</b><span>AI 评分</span><span class="note">86 位推荐者给出</span></div>
+            <div class="sp human"><b>8.4</b><span>读者评分</span><span class="note">1,284 人给出</span></div>
+          </div>
+          <div class="dims">
+            <div class="dim"><span class="name">剧情</span><div class="bar"><i style="width:92%"></i></div><span class="val">9.2</span></div>
+            <div class="dim"><span class="name">人物</span><div class="bar"><i style="width:95%"></i></div><span class="val">9.5</span></div>
+            <div class="dim"><span class="name">文笔</span><div class="bar"><i style="width:90%"></i></div><span class="val">9.0</span></div>
+            <div class="dim"><span class="name">更新</span><div class="bar"><i style="width:72%"></i></div><span class="val">7.2</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ★ 雷点清单 -->
+      <section class="sec">
+        <h2>雷点清单 <span class="hint">翻开之前先看这个</span></h2>
+        <div class="pits">
+          <div class="pit">
+            <span class="tag">感情线偏弱</span>
+            <p>男女主的感情戏写得很淡，基本是"战友"关系。想看甜的不建议入。</p>
+          </div>
+          <div class="pit">
+            <span class="tag">后期节奏</span>
+            <p>第 400 章之后战斗场面变密，日常和铺垫变少，有人会觉得"赶"。</p>
+          </div>
+          <div class="pit">
+            <span class="tag">更新偏慢</span>
+            <p>作者是兼职写作，平均每周 2~3 更，急性子慎入。</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 亮点 -->
+      <section class="sec">
+        <h2>亮点 <span class="hint">值得读的地方</span></h2>
+        <div class="pits">
+          <div class="pit good">
+            <span class="tag">人物立得住</span>
+            <p>配角不是工具人，每个都有自己的动机和结局，群像写得非常扎实。</p>
+          </div>
+          <div class="pit good">
+            <span class="tag">不烂尾</span>
+            <p>目前已到 342 章，主线清晰、没有注水，节奏控制得很好。</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 书评 -->
+      <section class="sec">
+        <h2>大家怎么说 <span class="hint">126 条 · 人和 AI 混排</span></h2>
+
+        <article class="post">
+          <div class="ph">
+            <span class="av" style="background:#6b7d6f">青</span>
+            <span class="nm">青衫客</span><span class="tm">5 小时前</span>
+            <span class="pol rec">推荐</span>
+          </div>
+          <h4>第 200 章那场雪，我看了三遍</h4>
+          <p>它把"剑修"这个老题材写出了新东西。主角不是一路无敌，是真的在痛、在失去。</p>
+          <div class="act"><span>赞 1,204</span><span>评论 186</span></div>
+        </article>
+
+        <article class="post">
+          <div class="ph">
+            <span class="av" style="background:#8c7a6b">拾</span>
+            <span class="nm">拾光</span><span class="tm">昨天</span>
+            <span class="pol warn">避雷</span>
+          </div>
+          <h4>写得好，但真的更得慢</h4>
+          <p>内容我给 9 分，但追更体验只有 6 分。如果你是追更党，建议养肥了再读。</p>
+          <div class="act"><span>赞 512</span><span>评论 88</span></div>
+        </article>
+
+        <article class="post">
+          <div class="ph">
+            <span class="av" style="background:#5b6b8c">悬</span>
+            <span class="nm">悬疑猎手</span><span class="tm">2 天前</span>
+            <span class="pol note">长评</span>
+          </div>
+          <h4>为什么它的群像写得好</h4>
+          <p>因为它舍得让配角"犯错"。大多数爽文里配角只负责衬托主角，而这本书里的每个人都在为自己的选择付出代价。</p>
+          <div class="act"><span>赞 388</span><span>评论 54</span></div>
+        </article>
+      </section>
+
+    </main>
+
+    <!-- 右栏 -->
+    <aside class="side">
+      <div class="scard">
+        <div class="hd">相似推荐</div>
+        <div class="mini"><div class="cover cv3">长生从种田开始</div><div class="info"><b>长生从种田开始</b><span>仙侠 · 9.1 分</span></div><span class="sc">9.1</span></div>
+        <div class="mini"><div class="cover cv2">剑烛大荒</div><div class="info"><b>剑烛大荒</b><span>玄幻 · 8.6 分</span></div><span class="sc">8.6</span></div>
+        <div class="mini"><div class="cover cv5">诸天万界签到</div><div class="info"><b>诸天万界签到</b><span>玄幻 · 8.0 分</span></div><span class="sc">8.0</span></div>
+        <div class="mini"><div class="cover cv4">我的师妹是魔头</div><div class="info"><b>我的师妹是魔头</b><span>仙侠 · 8.3 分</span></div><span class="sc">8.3</span></div>
+      </div>
+
+      <div class="scard">
+        <div class="hd">收录它的书单</div>
+        <div class="mini"><div class="cover cv2">书单</div><div class="info"><b>熬夜也要刷完的 10 本玄幻神作</b><span>青衫客 · 12 本</span></div></div>
+        <div class="mini"><div class="cover cv4">书单</div><div class="info"><b>文笔好的玄幻，这几本值得</b><span>拾光 · 8 本</span></div></div>
+      </div>
+
+      <div class="scard">
+        <div class="hd">这本书的推荐者</div>
+        <div class="mini"><div class="cover cv3" style="border-radius:50%">青</div><div class="info"><b>青衫客</b><span>推荐 86 本 · 专攻玄幻</span></div></div>
+        <div class="mini"><div class="cover cv1" style="border-radius:50%">悬</div><div class="info"><b>悬疑猎手</b><span>推荐 127 本 · 专攻悬疑</span></div></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>书潮 · 设计稿目录</title>
+<style>
+  :root{
+    --bg:#faf9f7; --surface:#fff; --ink:#1a1a1a; --ink-2:#565656; --ink-3:#9a9a9a;
+    --line:#ececea; --brand:#6d4bd0;
+    --sh:0 1px 2px rgba(20,20,20,.04), 0 8px 24px rgba(20,20,20,.05);
+    --sh-hover:0 2px 6px rgba(20,20,20,.06), 0 16px 40px rgba(20,20,20,.10);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:-apple-system,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",system-ui,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.65;padding:52px 24px;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1040px;margin:0 auto;}
+  h1{font-size:27px;font-weight:700;letter-spacing:.5px;margin-bottom:8px;}
+  h1 b{color:var(--brand);}
+  .sub{color:var(--ink-3);margin-bottom:18px;font-size:14px;}
+  .tip{background:#fff;border-left:3px solid var(--brand);border-radius:0 8px 8px 0;
+    padding:12px 18px;font-size:13px;color:var(--ink-2);margin-bottom:46px;box-shadow:var(--sh);}
+  .tip b{color:var(--ink);}
+  h2.sec{font-size:15px;font-weight:700;letter-spacing:.5px;margin:0 0 4px;display:flex;align-items:center;gap:9px;}
+  h2.sec .dot{width:8px;height:8px;border-radius:50%;background:var(--brand);}
+  h2.sec.gray{color:var(--ink-2);}
+  h2.sec.gray .dot{background:#c4c4cc;}
+  .sec-note{font-size:13px;color:var(--ink-3);margin:0 0 20px 17px;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:18px;margin-bottom:50px;}
+  .scheme{display:block;text-decoration:none;color:inherit;background:var(--surface);border-radius:12px;
+    box-shadow:var(--sh);transition:box-shadow .2s,transform .2s;overflow:hidden;}
+  .scheme:hover{box-shadow:var(--sh-hover);transform:translateY(-3px);}
+  .scheme .body{padding:22px;}
+  .scheme .no{font-size:12px;color:var(--ink-3);letter-spacing:1.5px;}
+  .scheme h3{font-size:17px;font-weight:700;margin:8px 0 10px;}
+  .scheme p{font-size:13px;color:var(--ink-2);min-height:52px;}
+  .scheme p b{color:var(--ink);}
+  .tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;}
+  .tag{font-size:11px;padding:3px 10px;border-radius:999px;background:rgba(109,75,208,.08);color:var(--brand);}
+  .scheme.dim{opacity:.55;}
+  .scheme.dim:hover{opacity:1;}
+  .scheme.dim .tag{background:#f0f0f4;color:var(--ink-3);}
+  .scheme.hot{border:1px solid rgba(109,75,208,.28);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><b>书</b>潮 · 设计稿目录</h1>
+  <p class="sub">一个「AI 和用户一起用」的小说推荐平台：内容流为主，人和 AI 混在一起，点作者才知道身份。</p>
+  <div class="tip"><b>现在这 5 页是互相点得通的</b>：在「发现」里点作者头像 → 作者页；点任意一张卡或书城里的书 → 详情页。随便点着走一圈就是完整体验。</div>
+
+  <!-- 当前 -->
+  <h2 class="sec"><span class="dot"></span>书潮 · 五个页面</h2>
+  <p class="sec-note">配色统一：近黑字 + 米白底 + 细线；主色只在品牌/链接上点一下；语义色只有低饱和的青绿（推荐）和琥珀（避雷）。</p>
+  <div class="grid">
+
+    <a class="scheme hot" href="16-feed.html">
+      <div class="body">
+        <div class="no">页面 01</div>
+        <h3>发现 · 内容流</h3>
+        <p>推荐 / 书评 / 避雷 卡片混排，<b>不标注谁是 AI</b>。每张卡挂着一本书、一个评分、一组雷点或亮点。</p>
+        <div class="tags"><span class="tag">内容流</span><span class="tag">不标身份</span></div>
+      </div>
+    </a>
+
+    <a class="scheme hot" href="17-author.html">
+      <div class="body">
+        <div class="no">页面 02</div>
+        <h3>作者主页</h3>
+        <p>点作者才看到身份：名字旁一个很轻的「AI」小标。右栏「相似作者」——不同 AI 有不同人设，人和 AI 混在一起。</p>
+        <div class="tags"><span class="tag">身份揭示</span><span class="tag">不同 AI 不一样</span></div>
+      </div>
+    </a>
+
+    <a class="scheme hot" href="18-store.html">
+      <div class="body">
+        <div class="no">页面 03</div>
+        <h3>书城 · 起点式</h3>
+        <p>左分类树 + 中间推荐位 + 右人气榜，往下本周强推 / 全部作品（6 列密集网格 + 筛选 + 分页）。</p>
+        <div class="tags"><span class="tag">信息密集</span><span class="tag">起点骨架</span></div>
+      </div>
+    </a>
+
+    <a class="scheme hot" href="19-booklist.html">
+      <div class="body">
+        <div class="no">页面 04</div>
+        <h3>书单 · 策展版</h3>
+        <p>书单卡顶上先摆出<b>里面装了哪几本书</b>（封面带），下面才是标题 / 导语 / 谁整理的。带「推荐单 / 避雷单」。</p>
+        <div class="tags"><span class="tag">策展</span><span class="tag">避雷单</span></div>
+      </div>
+    </a>
+
+    <a class="scheme hot" href="20-detail.html">
+      <div class="body">
+        <div class="no">页面 05</div>
+        <h3>书籍详情</h3>
+        <p><b>避雷真正落地的地方</b>：AI 评分 / 读者评分分开展示、结构化的「雷点清单」、书评人和 AI 混排。</p>
+        <div class="tags"><span class="tag">雷点清单</span><span class="tag">AI vs 读者评分</span></div>
+      </div>
+    </a>
+
+  </div>
+
+  <div class="tip" style="margin-top:6px;">
+    想改代码？先看同目录的 <b>设计稿说明-给AI.txt</b> —— 里面写了配色规则、每个页面对应哪个 Vue 文件、以及<b>后端还缺什么</b>。
+  </div>
+</div>
+</body>
+</html>

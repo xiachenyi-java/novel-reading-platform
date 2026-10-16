@@ -1,234 +1,350 @@
 <template>
-  <div class="novel-list-wrapper">
-    <!-- ===== 顶部导航 =====
-         壳和样式在 components/SiteHeader.vue（全站统一），
-         下面这些是"只属于首页"的内容，通过插槽塞进去。 -->
-    <SiteHeader>
-      <!-- 品牌名右侧：分类切换 + 榜入口 -->
-      <div class="nav-links">
-        <span class="nav-link" :class="{ active: currentTab === 'all' }" @click="switchTab('all')">全部</span>
-        <span class="nav-link" :class="{ active: currentTab === 'finish' }" @click="switchTab('finish')">完本</span>
-        <span class="nav-link" :class="{ active: currentTab === 'free' }" @click="switchTab('free')">免费</span>
-        <span class="nav-link" @click="$router.push('/ranking')">🏆 排行</span>
-      </div>
-
-      <!-- 右侧：登录态相关 -->
+  <div class="page">
+    <!-- ===== 顶部导航（全站统一，菜单在里面）===== -->
+    <SiteHeader show-search search-placeholder="搜书名、作者" @search="handleSearch">
       <template #right>
+        <!-- 右侧：登录态相关（这块是"这个页面自己的东西"，所以留在本文件里） -->
         <span class="welcome" v-if="!isLogin">游客模式 · 浏览全站</span>
         <span class="welcome" v-else>欢迎回来，{{ username }}</span>
 
         <el-button v-if="isAdmin" type="success" size="small" @click="goWrite">
-          ✍️ 发布新书
+          发布新书
         </el-button>
 
         <el-button v-if="!isLogin" type="primary" size="small" @click="goLogin">登录</el-button>
         <template v-else>
-          <el-button size="small" @click="$router.push('/shelf')">📚 我的书架</el-button>
+          <el-button size="small" @click="$router.push('/shelf')">我的书架</el-button>
           <el-button type="danger" size="small" @click="handleLogout">退出</el-button>
         </template>
       </template>
     </SiteHeader>
 
-    <!-- ===== Banner 推荐位 ===== -->
-    <div class="banner-section" v-if="bannerNovels.length > 0">
-      <el-carousel height="280px" indicator-position="outside">
-        <el-carousel-item v-for="(novel, index) in bannerNovels" :key="index">
-          <div class="banner-item" @click="goDetail(novel.id)">
-            <div class="banner-content">
-              <div class="banner-info">
-                <h2>{{ novel.title }}</h2>
-                <p>{{ novel.summary || '暂无简介' }}</p>
-                <div class="banner-meta">
-                  <span>📂 {{ novel.category || '未分类' }}</span>
-                  <span>📊 {{ novel.totalWords || 0 }} 字</span>
-                  <span>👁️ {{ novel.viewCount || 0 }} 阅读</span>
-                </div>
-                <el-button type="primary">立即阅读</el-button>
-              </div>
-              <div class="banner-cover">
-                <img
-                  v-if="novel.coverUrl || novel.coverUr1"
-                  :src="novel.coverUrl || novel.coverUr1"
-                  alt="封面"
-                />
-                <span v-else style="font-size:64px;">📖</span>
-              </div>
-            </div>
-          </div>
-        </el-carousel-item>
-      </el-carousel>
-    </div>
-
-    <!-- ===== 分类导航 + 搜索 ===== -->
-    <div class="category-nav">
-      <div class="container">
-        <div class="category-list">
-          <span
-            v-for="cat in categories"
+    <div class="container">
+      <!-- ================= 顶部三栏：分类树 / 推荐位 / 人气榜 ================= -->
+      <div class="hero">
+        <!-- 左：分类树 -->
+        <aside class="tree">
+          <div class="hd">作品分类</div>
+          <a
+            v-for="cat in categoryTree"
             :key="cat"
-            class="category-item"
-            :class="{ active: selectedCategory === cat }"
+            :class="{ on: selectedCategory === cat }"
             @click="filterByCategory(cat)"
           >
-            {{ cat }}
-          </span>
+            <span>{{ cat === '全部' ? '全部作品' : cat }}</span>
+            <!-- ★ 只有"全部"能显示真实总数 —— 每个分类各有多少本，
+                 需要后端在 /novels/categories 里带上数量。
+                 编不出来就不显示（见 docs/设计/前端改版-设计方案.txt）-->
+            <span v-if="cat === '全部' && total">{{ total }}</span>
+          </a>
+        </aside>
+
+        <!-- 中：推荐位（用列表里第一本真实的小说，不编）-->
+        <div v-if="featureNovel" class="feature" @click="goDetail(featureNovel.id)">
+          <div class="info">
+            <span class="tag">本周强推</span>
+            <h2>{{ featureNovel.title }}</h2>
+            <p>{{ featureNovel.summary || '这本书还没有简介' }}</p>
+            <div class="meta">
+              {{ featureNovel.author || '佚名' }} ·
+              {{ featureNovel.category || '未分类' }} ·
+              {{ formatWords(featureNovel.totalWords) || '字数未填' }} ·
+              {{ featureNovel.status === 'FINISHED' ? '已完结' : '连载中' }}
+            </div>
+            <button class="btn" @click.stop="goDetail(featureNovel.id)">开始阅读</button>
+          </div>
+          <div class="big-cover" :class="coverColor(featureNovel.title)">
+            <img v-if="coverOf(featureNovel)" :src="coverOf(featureNovel)" alt="封面" />
+            <template v-else>{{ featureNovel.title }}</template>
+          </div>
         </div>
-        <div class="search-box">
-          <el-input
-            v-model="keyword"
-            placeholder="搜索书名..."
-            clearable
-            @keyup.enter="handleSearch"
-            @clear="handleSearch"
+
+        <!-- 右：人气榜（真实接口 GET /novels/ranking）-->
+        <aside class="rank">
+          <div class="hd">
+            <b>人气榜</b>
+            <a @click="$router.push('/ranking')">完整 ›</a>
+          </div>
+          <div
+            v-for="(n, i) in ranking"
+            :key="n.id || i"
+            class="rk"
+            @click="goDetail(n.id)"
           >
-            <template #append>
-              <el-button @click="handleSearch">
-                <el-icon><Search /></el-icon>
-              </el-button>
-            </template>
-          </el-input>
+            <span class="no" :class="{ top: i < 3 }">{{ i + 1 }}</span>
+            <span class="t">{{ n.title }}</span>
+            <!-- ★ 榜接口没有字数，只有热度（NovelRankVO 就 4 个字段）-->
+            <span class="h">{{ n.heat.toLocaleString() }}</span>
+          </div>
+          <div v-if="ranking.length === 0" class="rk-empty">榜单还没数据</div>
+        </aside>
+      </div>
+
+      <!-- ================= 本周强推 ================= -->
+      <template v-if="picks.length > 0">
+        <div class="sec-hd">
+          <h3>本周强推</h3>
         </div>
-      </div>
-    </div>
-
-    <!-- ===== 小说列表 ===== -->
-    <div v-if="loading" class="container" style="text-align:center;padding:60px 0;">
-      <el-icon class="is-loading" style="font-size:32px;"><Loading /></el-icon>
-      <p style="color:#999;margin-top:12px;">加载小说中...</p>
-    </div>
-
-    <div v-else-if="novels.length > 0" class="container">
-      <div class="section-header">
-        <h2 class="section-title">
-          {{ keyword ? `🔍 "${keyword}" 的搜索结果` : (selectedCategory === '全部' ? '📚 全部作品' : `📂 ${selectedCategory}`) }}
-        </h2>
-        <span class="section-count">共 {{ total }} 本</span>
-      </div>
-
-      <el-row :gutter="24">
-        <el-col :span="6" v-for="novel in novels" :key="novel.id" style="margin-bottom:24px;">
-          <el-card shadow="hover" class="novel-card" @click="goDetail(novel.id)">
-            <div class="card-cover">
-              <img
-                v-if="novel.coverUrl || novel.coverUr1"
-                :src="novel.coverUrl || novel.coverUr1"
-                alt="封面"
-                style="width:100%;height:100%;object-fit:cover;"
-              />
-              <div v-else class="cover-placeholder">📖</div>
-              <div class="card-badge" v-if="novel.status === 'ONGOING'">连载中</div>
-              <div class="card-badge finish" v-else>已完结</div>
+        <div class="rec-row">
+          <div
+            v-for="n in picks"
+            :key="n.id"
+            class="rec"
+            @click="goDetail(n.id)"
+          >
+            <div class="cover" :class="coverColor(n.title)">
+              <img v-if="coverOf(n)" :src="coverOf(n)" alt="封面" />
+              <template v-else>{{ n.title }}</template>
             </div>
-            <div class="card-body">
-              <h3>{{ novel.title }}</h3>
-              <p class="summary">{{ novel.summary || '暂无简介' }}</p>
-              <div class="meta">
-                <span>📊 {{ novel.totalWords || 0 }} 字</span>
-                <span>📅 {{ novel.lastUpdateTime ? novel.lastUpdateTime.slice(0,10) : '未更新' }}</span>
-              </div>
-              <div class="admin-actions" v-if="isAdmin" @click.stop>
-                <el-button type="danger" size="small" plain @click="handleDelete(novel.id)">
-                  删除
-                </el-button>
-              </div>
+            <div class="info">
+              <span class="cat">{{ n.category || '未分类' }}</span>
+              <h4>{{ n.title }}</h4>
+              <div class="au">{{ n.author || '佚名' }}</div>
+              <div class="d">{{ n.summary || '暂无简介' }}</div>
             </div>
-          </el-card>
-        </el-col>
-      </el-row>
+          </div>
+        </div>
+      </template>
 
-      <div style="display:flex;justify-content:center;margin-top:20px;">
-        <el-pagination
-          v-model:current-page="pageNum"
-          v-model:page-size="pageSize"
-          :total="total"
-          :page-sizes="[8, 16, 24]"
-          layout="total, sizes, prev, pager, next"
-          @current-change="loadNovels"
-          @size-change="loadNovels"
-        />
+      <!-- ================= 全部作品 ================= -->
+      <div class="sec-hd">
+        <h3>{{ listTitle }}</h3>
+        <span class="total">共 {{ total }} 本</span>
       </div>
-    </div>
 
-    <div v-else class="container" style="text-align:center;padding:60px 0;">
-      <div style="font-size:48px;opacity:0.3;">📭</div>
-      <p style="color:#999;margin-top:12px;">
-        {{ keyword ? `没有找到与 "${keyword}" 相关的小说` : '暂无小说，敬请期待！' }}
-      </p>
-      <el-button v-if="isAdmin" type="primary" @click="goWrite" style="margin-top:16px;">
-        ✍️ 发布第一本书
-      </el-button>
+      <!-- 状态筛选（★ 这个筛选是**真的管用**的，走后端 status 参数）
+           ★ 排序（按热度/最新/字数）没做：后端没有 sort 参数，
+             摆一排点了没反应的下拉框，比不摆更糟 -->
+      <div class="filters">
+        <a
+          v-for="s in STATUS_TABS"
+          :key="s.value"
+          :class="{ on: status === s.value }"
+          @click="switchStatus(s.value)"
+        >
+          {{ s.label }}
+        </a>
+      </div>
+
+      <!-- ===== 加载中 ===== -->
+      <div v-if="loading" class="state-box">
+        <el-icon class="is-loading" :size="32"><Loading /></el-icon>
+        <p>正在找书…</p>
+      </div>
+
+      <!-- ===== 报错态 =====
+           ★ 原来没有这个分支：接口一挂就走到空态显示"暂无小说"，
+             用户分不清是"真没书"还是"服务挂了"（前端说明第十章记着这个已知问题）-->
+      <div v-else-if="loadError" class="state-box">
+        <div class="state-emoji">🔌</div>
+        <p>书城没打开</p>
+        <p class="state-sub">{{ errorMsg }}</p>
+        <el-button type="primary" class="state-btn" @click="loadNovels">重试</el-button>
+      </div>
+
+      <!-- ===== 书城有数据 ===== -->
+      <template v-else-if="novels.length > 0">
+        <div class="grid">
+          <div
+            v-for="n in novels"
+            :key="n.id"
+            class="book"
+            @click="goDetail(n.id)"
+          >
+            <div class="cover" :class="coverColor(n.title)">
+              <img v-if="coverOf(n)" :src="coverOf(n)" alt="封面" />
+              <template v-else>{{ n.title }}</template>
+              <span class="st" :class="n.status === 'FINISHED' ? 'fin' : 'ing'">
+                {{ n.status === 'FINISHED' ? '完结' : '连载' }}
+              </span>
+            </div>
+            <h4>{{ n.title }}</h4>
+            <div class="au">{{ n.author || '佚名' }}</div>
+            <div class="au">{{ formatWords(n.totalWords) }}</div>
+            <!-- 管理员删除：@click.stop 挡住外层"进详情页" -->
+            <div v-if="isAdmin" class="admin" @click.stop>
+              <el-button type="danger" size="small" plain @click="handleDelete(n.id)">
+                删除
+              </el-button>
+            </div>
+          </div>
+        </div>
+
+        <div class="pager">
+          <el-pagination
+            v-model:current-page="pageNum"
+            v-model:page-size="pageSize"
+            :total="total"
+            :page-sizes="[12, 24, 48]"
+            layout="total, sizes, prev, pager, next"
+            @current-change="loadNovels"
+            @size-change="loadNovels"
+          />
+        </div>
+      </template>
+
+      <!-- ===== 空态 ===== -->
+      <div v-else class="state-box">
+        <div class="state-emoji">🍓</div>
+        <p>{{ emptyTitle }}</p>
+        <p class="state-sub">{{ emptySub }}</p>
+        <el-button
+          v-if="isAdmin && !keyword && selectedCategory === '全部'"
+          type="primary"
+          class="state-btn"
+          @click="goWrite"
+        >
+          发布第一本书
+        </el-button>
+        <el-button
+          v-else
+          type="primary"
+          class="state-btn"
+          @click="resetFilter"
+        >
+          看全部作品
+        </el-button>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, onMounted, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
-import { Loading, Search } from '@element-plus/icons-vue'
-import { getNovelList, getCategories, deleteNovel } from '../api/novel'
+import { Loading } from '@element-plus/icons-vue'
+import { getNovelList, getCategories, getRanking, deleteNovel } from '../api/novel'
 import { useAuth } from '../composables/useAuth'
 import SiteHeader from '../components/SiteHeader.vue'
+import { coverColor } from '../mock/data'
+import { formatWords } from '../utils/format'
+import { rankList } from '../utils/normalize'
 
+const route = useRoute()
 const router = useRouter()
 
 // ★ 从 useAuth 拿登录态 / 权限 / 用户名 / 退出
 const { isLogin, isAdmin, username, logout } = useAuth()
 
+// ===== 列表状态 =====
 const pageNum = ref(1)
-const pageSize = ref(8)
+const pageSize = ref(12) // ★ 从 8 改成 12：设计稿的网格一行 6 本，12 刚好两行
 const total = ref(0)
 const novels = ref([])
 const loading = ref(false)
 const selectedCategory = ref('全部')
-const currentTab = ref('all')
 const keyword = ref('')
+const categories = ref([])
 
-// 分类列表（从后端动态加载）
-const categories = ref(['全部'])
+// 状态筛选（对应后端 status 参数）
+const STATUS_TABS = [
+  { label: '全部', value: '' },
+  { label: '连载中', value: 'ONGOING' },
+  { label: '已完结', value: 'FINISHED' }
+]
+const status = ref('')
 
-// Banner 推荐（取前3本作为推荐）
-const bannerNovels = computed(() => {
-  return novels.value.slice(0, 3)
+// ===== 报错态（原来没有，见模板里的说明）=====
+const loadError = ref(false)
+const errorMsg = ref('')
+
+// ===== 榜（真实接口）=====
+const ranking = ref([])
+
+// ===== 派生 =====
+const categoryTree = computed(() => ['全部', ...categories.value])
+
+/** 推荐位用列表里第一本（真数据，不编）*/
+const featureNovel = computed(() => novels.value[0] || null)
+
+/** 本周强推：紧跟推荐位往后取 4 本（真数据）*/
+const picks = computed(() => novels.value.slice(1, 5))
+
+const listTitle = computed(() => {
+  if (keyword.value) return `"${keyword.value}" 的搜索结果`
+  if (selectedCategory.value !== '全部') return selectedCategory.value
+  return '全部作品'
 })
 
+const emptyTitle = computed(() =>
+  keyword.value ? `没有找到"${keyword.value}"` : '这里还没有书'
+)
+const emptySub = computed(() =>
+  keyword.value ? '换个关键词试试，或者看看别的分类' : '换个分类看看'
+)
+
+// ===== 小工具 =====
+/** 封面地址：★ 兼容两个字段名 —— 后端历史上有过 coverUrl / coverUr1 两种写法（l 打成 1）*/
+const coverOf = (n) => n.coverUrl || n.coverUr1 || ''
+
+// ===== 加载分类 =====
 const loadCategories = async () => {
   try {
     const res = await getCategories()
-    categories.value = ['全部', ...(res.data.data || [])]
+    // 业务异常是 HTTP 200 + code=500，axios 不会 reject，所以这里要显式判
+    if (res.data.code !== 200) {
+      console.warn('[书城] 分类接口返回失败:', res.data.msg)
+      return
+    }
+    categories.value = res.data.data || []
   } catch (e) {
-    console.error('加载分类失败', e)
+    // ★ 分类拉不到不算致命：树里只剩"全部"，书还是能看。
+    //   但必须留日志 —— 只吞不报就是静默失败（前端说明第十章记过这条）
+    console.error('[书城] 加载分类失败:', e)
   }
 }
 
+// ===== 加载榜 =====
+const loadRanking = async () => {
+  try {
+    const res = await getRanking(10, 'total')
+    if (res.data.code !== 200) {
+      console.warn('[书城] 榜单接口返回失败:', res.data.msg)
+      return
+    }
+    // ★ 必须过 rankList() 转一道：排行榜接口返回的字段名是**大写开头**的
+    //   （NovelId / Title / Heat），直接读 n.title 会永远 undefined ——
+    //   书名空白、点了没反应，而且不报错。原因见 utils/normalize.js
+    ranking.value = rankList(res.data.data)
+  } catch (e) {
+    console.error('[书城] 加载榜单失败:', e)
+  }
+}
+
+// ===== 加载列表 =====
 const loadNovels = async () => {
   loading.value = true
-  try {
-    // 分类：「全部」不传
-    const categoryParam = selectedCategory.value === '全部' ? '' : selectedCategory.value
+  loadError.value = false
+  errorMsg.value = ''
 
-    // 状态：currentTab → 后端 status 值
-    let statusParam = ''
-    if (currentTab.value === 'finish') {
-      statusParam = 'FINISHED'
-    }
-    // 'all' 和 'free' 都传空（free 暂不处理）
+  try {
+    const categoryParam = selectedCategory.value === '全部' ? '' : selectedCategory.value
 
     const res = await getNovelList(
       pageNum.value,
       pageSize.value,
       categoryParam,
-      statusParam,
+      status.value,
       keyword.value
     )
-    const data = res.data.data || res.data
-    const list = data.content || data || []
 
-    novels.value = list
-    total.value = data.totalElements || list.length
-  } catch (error) {
-    console.error('加载小说列表失败:', error)
-    ElMessage.error('加载小说列表失败')
+    // ★ 业务失败（HTTP 200 但 code != 200）也要走报错态 —— 不能落到空态
+    if (res.data.code !== 200) {
+      loadError.value = true
+      errorMsg.value = res.data.msg || '后端返回了错误'
+      novels.value = []
+      total.value = 0
+      return
+    }
+
+    const data = res.data.data || {}
+    novels.value = data.content || []
+    total.value = data.totalElements || 0
+  } catch (e) {
+    console.error('[书城] 加载小说列表失败:', e)
+    loadError.value = true
+    errorMsg.value = '没连上服务器，检查一下后端起了没'
     novels.value = []
     total.value = 0
   } finally {
@@ -236,357 +352,596 @@ const loadNovels = async () => {
   }
 }
 
+// ===== 筛选动作 =====
 const filterByCategory = (cat) => {
+  if (selectedCategory.value === cat) return
   selectedCategory.value = cat
   pageNum.value = 1
   loadNovels()
 }
 
-const handleSearch = () => {
+const switchStatus = (val) => {
+  if (status.value === val) return
+  status.value = val
   pageNum.value = 1
   loadNovels()
 }
 
-const switchTab = (tab) => {
-  currentTab.value = tab
+/** 搜索框在导航栏里（SiteHeader 的 search 事件）*/
+const handleSearch = (kw) => {
+  keyword.value = kw || ''
   pageNum.value = 1
   loadNovels()
 }
 
+const resetFilter = () => {
+  selectedCategory.value = '全部'
+  status.value = ''
+  keyword.value = ''
+  pageNum.value = 1
+  loadNovels()
+}
+
+// ===== 跳转 =====
 const goLogin = () => router.push('/login')
 const goWrite = () => router.push('/write')
 const goDetail = (id) => router.push(`/novels/${id}`)
 
-// ★ 退出：从 localStorage.clear() + window.location.href（全页刷新）
-//   改成 useAuth.logout() + router.push（SPA 内跳转）
+// ===== 退出 =====
 const handleLogout = () => {
-  ElMessageBox.confirm('确定要退出登录吗？', '提示').then(() => {
-    logout()
-    ElMessage.success('已退出登录')
-    router.push('/login')
-  }).catch(() => {})
+  ElMessageBox.confirm('确定要退出登录吗？', '提示')
+    .then(() => {
+      logout()
+      ElMessage.success('已退出登录')
+      router.push('/login')
+    })
+    .catch(() => {})
 }
 
+// ===== 管理员删除 =====
 const handleDelete = (id) => {
-  ElMessageBox.confirm('确定要删除这本小说吗？删除后无法恢复！', '危险操作', {
-    confirmButtonText: '确定删除',
-    cancelButtonText: '取消',
+  ElMessageBox.confirm('删除后无法恢复，确定删掉这本小说？', '危险操作', {
+    confirmButtonText: '删除',
+    cancelButtonText: '再想想',
     type: 'warning'
-  }).then(async () => {
-    try {
-      const res = await deleteNovel(id)
-      if (res.data.code === 200) {
-        ElMessage.success('删除成功')
-        loadNovels()
-      } else {
-        ElMessage.error(res.data.msg || '删除失败')
+  })
+    .then(async () => {
+      try {
+        const res = await deleteNovel(id)
+        if (res.data.code === 200) {
+          ElMessage.success('已删除')
+          loadNovels()
+        } else {
+          ElMessage.error(res.data.msg || '删除失败')
+        }
+      } catch (e) {
+        console.error('[书城] 删除失败:', e)
+        ElMessage.error('删除失败，检查一下权限或网络')
       }
-    } catch (error) {
-      console.error('删除失败:', error)
-      ElMessage.error('删除失败，请检查权限或网络')
-    }
-  }).catch(() => {})
+    })
+    .catch(() => {})
 }
+
+// ★ 从发现页 / 书单页的搜索框跳过来会带 ?keyword=xxx
+//   （那边搜索不了，统一把关键词甩到书城，因为只有这儿接的是真搜索）
+watch(
+  () => route.query.keyword,
+  (kw) => {
+    if (!kw) return
+    keyword.value = String(kw)
+    pageNum.value = 1
+    loadNovels()
+  },
+  { immediate: true }
+)
 
 onMounted(() => {
   loadCategories()
-  loadNovels()
+  loadRanking()
+  // ★ 如果 URL 上带了 keyword，上面那个 watch 已经先加载过一次了，别重复请求
+  if (!route.query.keyword) loadNovels()
 })
 </script>
 
 <style scoped>
-.novel-list-wrapper {
+/* ============================================================
+   书城（原首页）
+   ------------------------------------------------------------
+   骨架照起点：左分类树 + 中间推荐位 + 右人气榜，往下是"本周强推 / 全部作品"。
+   但**配色沿用草莓这套**（近黑字 + 米白底 + 细线 + 低饱和），不是起点那种红黑。
+   ============================================================ */
+.page {
   min-height: 100vh;
   background: var(--bg-page);
 }
+.container {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
 
-/* ===== 顶部导航里属于"首页自己"的那几块 =====
-   （导航栏的壳和通用样式在 components/SiteHeader.vue，不在这里）
-   ★ 这些样式是塞进 SiteHeader 插槽的内容，Vue 的规矩是"谁的页面谁管样式"，
-     所以必须留在本文件，不能挪到 SiteHeader 里去。 */
-.nav-links {
-  display: flex;
-  gap: var(--sp-5);
-}
-.nav-link {
-  cursor: pointer;
-  color: var(--text-3);
-  font-size: var(--fs-base);
+/* 导航栏右侧那两行小字（塞在 SiteHeader 插槽里，所以样式留在本页）*/
+.welcome {
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
   white-space: nowrap;
-  transition: color var(--t-base);
 }
-.nav-link:hover {
+
+/* ===== 顶部三栏 ===== */
+.hero {
+  display: grid;
+  grid-template-columns: 196px 1fr 250px;
+  gap: 16px;
+  padding: 24px 0 0;
+}
+
+/* 分类树 */
+.tree {
+  background: #fff;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 6px 0;
+  overflow: hidden;
+  align-self: start;
+}
+.tree .hd {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--ink-3);
+  padding: 10px 16px 12px;
+  border-bottom: 1px solid var(--line-2);
+  letter-spacing: 1px;
+}
+.tree a {
+  display: flex;
+  justify-content: space-between;
+  padding: 9px 16px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: all var(--t-fast);
+}
+.tree a span:last-child {
+  color: var(--ink-4);
+  font-size: var(--fs-xs);
+}
+.tree a:hover {
+  background: var(--bg-page);
   color: var(--brand);
 }
-.nav-link.active {
+.tree a.on {
+  background: var(--bg-page);
   color: var(--brand);
   font-weight: 600;
 }
-.welcome {
-  color: var(--text-4);
-  font-size: var(--fs-base);
-  white-space: nowrap;
-}
 
-/* ===== Banner ===== */
-/* ★ 左右留白必须和 SiteHeader 用同一个值（--sp-5），
-   否则导航栏和下面内容区会差几个像素，看起来"没对齐" */
-.banner-section {
-  max-width: var(--container);
-  margin: var(--sp-5) auto 0;
-  padding: 0 var(--sp-5);
-}
-.banner-item {
-  background: linear-gradient(135deg, #1a1040, #2d1b69);
-  border-radius: 16px;
-  padding: 30px 40px;
-  height: 100%;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-}
-.banner-content {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
-}
-.banner-info {
-  flex: 1;
-  color: white;
-}
-.banner-info h2 {
-  font-size: 24px;
-  margin-bottom: 8px;
-}
-.banner-info p {
-  opacity: 0.8;
-  font-size: 14px;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+/* 推荐位：深墨色大卡（不炫）*/
+.feature {
+  position: relative;
+  border-radius: var(--radius-lg);
   overflow: hidden;
+  min-height: 352px;
+  padding: 38px 40px;
+  background: linear-gradient(135deg, #2b3242, #413a56);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 30px;
+  cursor: pointer;
+}
+.feature .info {
+  position: relative;
+  z-index: 1;
+  max-width: 56%;
+}
+.feature .tag {
+  display: inline-block;
+  font-size: var(--fs-xs);
+  padding: 3px 12px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.14);
+  margin-bottom: 14px;
+  letter-spacing: 1px;
+}
+.feature h2 {
+  font-size: var(--fs-3xl);
+  font-weight: 700;
+  letter-spacing: 1px;
   margin-bottom: 12px;
 }
-.banner-meta {
-  display: flex;
-  gap: 20px;
-  font-size: 13px;
-  opacity: 0.7;
-  margin-bottom: 16px;
-}
-.banner-cover {
-  width: 120px;
-  height: 160px;
-  border-radius: 8px;
-  background: rgba(255,255,255,0.1);
-  display: flex;
-  justify-content: center;
-  align-items: center;
+.feature p {
+  font-size: 13.5px;
+  opacity: 0.8;
+  line-height: 1.8;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  flex-shrink: 0;
+  margin-bottom: 18px;
 }
-.banner-cover img {
+.feature .meta {
+  font-size: 12.5px;
+  opacity: 0.7;
+  margin-bottom: 20px;
+}
+.feature .btn {
+  background: #fff;
+  color: #2b3242;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 10px 26px;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+.big-cover {
+  position: relative;
+  z-index: 1;
+  width: 132px;
+  height: 184px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #fff;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  letter-spacing: 2px;
+  padding: 12px;
+  overflow: hidden;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.4);
+}
+.big-cover img,
+.rec .cover img,
+.book .cover img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-/* ===== 分类导航 + 搜索 ===== */
-.category-nav {
-  background: white;
-  border-bottom: 1px solid #f0f0f0;
-  padding: 8px 0;
-  margin-top: 16px;
+/* 人气榜 */
+.rank {
+  background: #fff;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 6px 0;
+  overflow: hidden;
+  align-self: start;
 }
-.category-nav .container {
-  max-width: var(--container);
-  margin: 0 auto;
-  padding: 0 var(--sp-5);
+.rank .hd {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  gap: var(--sp-5);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line-2);
 }
-.category-list {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  flex: 1;
+.rank .hd b {
+  font-size: 13.5px;
+  color: var(--ink);
 }
-.category-item {
-  padding: 6px 18px;
-  border-radius: 20px;
+.rank .hd a {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
   cursor: pointer;
-  font-size: 14px;
-  color: #666;
-  transition: all 0.3s;
 }
-.category-item:hover {
-  color: #7c3aed;
-  background: #f3f0ff;
+.rank .hd a:hover {
+  color: var(--brand);
 }
-.category-item.active {
-  color: white;
-  background: #7c3aed;
+.rk {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 16px;
+  font-size: var(--fs-sm);
+  cursor: pointer;
 }
-.search-box {
-  width: 240px;
+.rk:hover {
+  background: var(--bg-page);
+}
+.rk .no {
+  width: 16px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--ink-4);
   flex-shrink: 0;
 }
-.search-box :deep(.el-input-group__append) {
-  background: #7c3aed;
-  border-color: #7c3aed;
-  color: white;
-  padding: 0 14px;
+.rk .no.top {
+  color: var(--warn);
 }
-.search-box :deep(.el-input-group__append .el-button) {
-  color: white;
-  background: transparent;
-  border: none;
-  margin: 0;
-  padding: 0;
-}
-.search-box :deep(.el-input-group__append .el-button:hover) {
-  color: #e9d5ff;
-  background: transparent;
-}
-
-/* ===== 内容区 ===== */
-.container {
-  max-width: var(--container);
-  margin: 0 auto;
-  padding: var(--sp-5) var(--sp-5) var(--sp-7);
-}
-.section-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-.section-title {
-  font-size: 20px;
-  color: #1a1a2e;
-}
-.section-count {
-  color: #999;
-  font-size: 14px;
-}
-
-/* ===== 小说卡片 ===== */
-.novel-card {
-  cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
-  border-radius: 12px;
-  overflow: hidden;
-}
-.novel-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 12px 32px rgba(0,0,0,0.10);
-}
-.card-cover {
-  height: 180px;
-  background: linear-gradient(135deg, #e0d7ff, #c4b5fd);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  overflow: hidden;
-  position: relative;
-}
-.cover-placeholder {
-  font-size: 64px;
-  opacity: 0.6;
-}
-.card-badge {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  background: #f59e0b;
-  color: white;
-  font-size: 12px;
-  padding: 2px 10px;
-  border-radius: 12px;
-}
-.card-badge.finish {
-  background: #10b981;
-}
-.card-body {
-  padding: 12px 14px 8px;
-}
-.card-body h3 {
-  margin: 0 0 6px 0;
-  font-size: 16px;
-  color: #1a1a2e;
+.rk .t {
+  flex: 1;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--ink-2);
 }
-.summary {
-  font-size: 13px;
-  color: #888;
+.rk .h {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+.rk-empty {
+  padding: 16px;
+  font-size: var(--fs-sm);
+  color: var(--ink-4);
+}
+
+/* ===== 区块标题 ===== */
+.sec-hd {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 34px 0 16px;
+}
+.sec-hd h3 {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: var(--ink);
+}
+.sec-hd .total {
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+}
+
+/* ===== 本周强推 ===== */
+.rec-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+.rec {
+  display: flex;
+  gap: 12px;
+  background: #fff;
+  border-radius: var(--radius-lg);
+  padding: 12px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: box-shadow var(--t-base);
+}
+.rec:hover {
+  box-shadow: var(--shadow-hover);
+}
+.rec .cover {
+  width: 62px;
+  height: 86px;
+  border-radius: 5px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px;
+  line-height: 1.35;
+  overflow: hidden;
+}
+.rec .info {
+  min-width: 0;
+}
+.rec .cat {
+  font-size: 11px;
+  color: var(--brand);
+  background: var(--line-2);
+  padding: 1px 8px;
+  border-radius: 3px;
+}
+.rec h4 {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  margin: 6px 0 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink);
+}
+.rec .au {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+.rec .d {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  margin-top: 5px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  height: 38px;
 }
-.meta {
-  font-size: 12px;
-  color: #999;
+
+/* ===== 状态筛选 ===== */
+.filters {
   display: flex;
-  gap: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.filters a {
+  font-size: var(--fs-sm);
+  padding: 6px 15px;
+  border-radius: var(--radius-full);
+  background: #fff;
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: all var(--t-base);
+}
+.filters a:hover {
+  border-color: var(--ink-4);
+  color: var(--ink);
+}
+.filters a.on {
+  background: var(--ink);
+  color: #fff;
+  border-color: var(--ink);
+  font-weight: 600;
+}
+
+/* ===== 作品网格 ===== */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 24px 16px;
+}
+.book {
+  cursor: pointer;
+}
+.book .cover {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #fff;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  padding: 8px;
+  line-height: 1.4;
+  letter-spacing: 0.5px;
+  box-shadow: 0 4px 12px rgba(20, 20, 20, 0.1);
+  transition: transform var(--t-base), box-shadow var(--t-base);
+  position: relative;
+  overflow: hidden;
+}
+.book:hover .cover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 26px rgba(20, 20, 20, 0.18);
+}
+.book h4 {
+  font-size: 13.5px;
+  font-weight: 600;
+  margin: 9px 0 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink);
+}
+.book:hover h4 {
+  color: var(--brand);
+}
+.book .au {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 连载/完结角标 */
+.book .cover .st {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  letter-spacing: 0.5px;
+}
+.book .cover .st.fin {
+  background: rgba(47, 143, 111, 0.85);
+}
+.book .admin {
   margin-top: 6px;
 }
-.admin-actions {
+
+/* ===== 分页 ===== */
+.pager {
+  display: flex;
+  justify-content: center;
+  padding: 36px 0 72px;
+}
+/* 轻量对齐设计稿的调子（不重写分页器，Element 那套逻辑已经够用）*/
+.pager :deep(.el-pagination) {
+  --el-pagination-font-size: var(--fs-sm);
+  --el-pagination-button-color: var(--ink-2);
+}
+
+/* ===== 三态 ===== */
+.state-box {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--ink-3);
+}
+.state-box p {
+  margin-top: 12px;
+  font-size: var(--fs-md);
+}
+.state-box .state-emoji {
+  font-size: 56px;
+  line-height: 1;
+  opacity: 0.3;
+}
+.state-box .state-sub {
   margin-top: 8px;
-  text-align: right;
+  font-size: var(--fs-sm);
+  color: var(--ink-4);
+}
+.state-btn {
+  margin-top: 16px;
 }
 .is-loading {
   animation: rotate 1.5s linear infinite;
 }
 @keyframes rotate {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-/* ===== 响应式 ===== */
-/* ★ 导航栏的窄屏折行规则已经搬进 SiteHeader.vue 统一管，
-   这里只留"首页自己"的部分 */
-@media (max-width: 768px) {
-  /* 手机屏位置紧张，把欢迎语藏掉，给按钮腾地方 */
-  .welcome {
+/* ===== 窄屏 ===== */
+@media (max-width: 980px) {
+  .hero {
+    grid-template-columns: 1fr;
+  }
+  /* ★ 分类树和人气榜在手机上先撤掉：树占满一屏高，榜是次要信息。
+     分类筛选手机上暂时没法用（后面可以在顶部做个下拉） */
+  .tree,
+  .rank {
     display: none;
   }
-  .nav-link {
-    font-size: var(--fs-sm);
+  .rec-row {
+    grid-template-columns: repeat(2, 1fr);
   }
-  .banner-item {
-    padding: 20px;
+  .grid {
+    grid-template-columns: repeat(3, 1fr);
   }
-  .banner-info h2 {
-    font-size: 18px;
-  }
-  .banner-cover {
-    width: 80px;
-    height: 110px;
-  }
-  /* ★ 这条的 padding 必须和上面 .container 一致。
-     它选择器更长（优先级更高），会盖掉 .container 的 padding，
-     所以这里得单独再说一遍，否则分类栏会比书本列表多凸出 8px。 */
-  .category-nav .container {
-    flex-direction: column;
-    align-items: stretch;
-    padding: 0 var(--sp-4);
-  }
-  .category-list {
-    justify-content: center;
-  }
-  .search-box {
-    width: 100%;
-  }
-  /* 窄屏左右留白也要和导航栏一致（SiteHeader 窄屏用的是 --sp-4） */
+}
+@media (max-width: 600px) {
   .container {
-    padding: var(--sp-4) var(--sp-4) var(--sp-6);
+    padding: 0 16px;
+  }
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 18px 14px;
+  }
+  .feature {
+    padding: 26px 22px;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .feature .info {
+    max-width: 100%;
+  }
+  .big-cover {
+    display: none;
+  }
+  .welcome {
+    display: none;
   }
 }
 </style>

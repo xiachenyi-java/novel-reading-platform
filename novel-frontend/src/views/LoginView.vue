@@ -5,7 +5,7 @@
       <div class="header-inner">
         <div class="brand" @click="$router.push('/')">
           <span class="brand-icon">📚</span>
-          <span class="brand-name">夏辰义的书城</span>
+          <span class="brand-name">草莓</span>
         </div>
         <div class="header-right">
           <span class="tip">还没有账号？</span>
@@ -253,7 +253,7 @@ onMounted(() => {
 
 .login-page {
   min-height: 100vh;
-  background: #f7f8fa;
+  background: #faf9f7;
   display: flex;
   flex-direction: column;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -261,7 +261,7 @@ onMounted(() => {
 
 .login-header {
   background: #fff;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid #ececea;
   height: 60px;
   flex-shrink: 0;
 }
@@ -285,7 +285,7 @@ onMounted(() => {
 .brand-name {
   font-size: 20px;
   font-weight: 700;
-  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  background: linear-gradient(135deg, #6d4bd0, #6d4bd0);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -298,12 +298,12 @@ onMounted(() => {
 }
 .header-right .tip { color: #999; }
 .link {
-  color: #7c3aed;
+  color: #6d4bd0;
   text-decoration: none;
   cursor: pointer;
   transition: color 0.2s;
 }
-.link:hover { color: #4f46e5; }
+.link:hover { color: #6d4bd0; }
 
 .login-main {
   flex: 1;
@@ -354,9 +354,9 @@ onMounted(() => {
 .book-cover {
   position: absolute;
   inset: 0;
-  background: linear-gradient(145deg, #a78bfa, #6d28d9);
+  background: linear-gradient(145deg, #a78bfa, #5b3cb8);
   border-radius: 8px 14px 14px 8px;
-  box-shadow: 0 20px 40px rgba(124, 58, 237, 0.35), inset -3px 0 12px rgba(255,255,255,0.15);
+  box-shadow: 0 20px 40px rgba(109, 75, 208, 0.35), inset -3px 0 12px rgba(255,255,255,0.15);
   transform: rotate(-6deg);
 }
 .book-page {
@@ -375,7 +375,7 @@ onMounted(() => {
   top: 6px;
   bottom: 6px;
   width: 10px;
-  background: linear-gradient(180deg, #8b5cf6, #4c1d95);
+  background: linear-gradient(180deg, #8b5cf6, #4a2f9e);
   border-radius: 4px;
   transform: rotate(-6deg);
   box-shadow: inset -2px 0 8px rgba(0,0,0,0.2);
@@ -400,7 +400,7 @@ onMounted(() => {
 .slogan {
   font-size: 26px;
   font-weight: 700;
-  color: #4c1d95;
+  color: #4a2f9e;
   letter-spacing: 2px;
   margin: 30px 0 10px;
 }
@@ -417,12 +417,12 @@ onMounted(() => {
   border-radius: 12px;
   padding: 36px 40px 28px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
-  border: 1px solid #f0f0f0;
+  border: 1px solid #ececea;
 }
 
 .tabs {
   display: flex;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid #ececea;
   margin-bottom: 28px;
 }
 .tab {
@@ -435,9 +435,9 @@ onMounted(() => {
   position: relative;
   transition: color 0.2s;
 }
-.tab:hover { color: #7c3aed; }
+.tab:hover { color: #6d4bd0; }
 .tab.active {
-  color: #1a1a2e;
+  color: #1a1a1a;
   font-weight: 600;
 }
 .tab.active::after {
@@ -448,7 +448,7 @@ onMounted(() => {
   transform: translateX(-50%);
   width: 40px;
   height: 3px;
-  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  background: linear-gradient(135deg, #6d4bd0, #6d4bd0);
   border-radius: 2px;
 }
 
@@ -457,15 +457,15 @@ onMounted(() => {
 }
 .custom-input :deep(.el-input__wrapper) {
   border-radius: 8px;
-  box-shadow: 0 0 0 1px #e5e7eb inset;
+  box-shadow: 0 0 0 1px #ececea inset;
   padding: 4px 12px;
   transition: all 0.2s;
 }
 .custom-input :deep(.el-input__wrapper:hover) {
-  box-shadow: 0 0 0 1px #c4b5fd inset;
+  box-shadow: 0 0 0 1px #5b6b8c inset;
 }
 .custom-input :deep(.el-input__wrapper.is-focus) {
-  box-shadow: 0 0 0 1px #7c3aed inset, 0 0 0 3px rgba(124, 58, 237, 0.1);
+  box-shadow: 0 0 0 1px #6d4bd0 inset, 0 0 0 3px rgba(109, 75, 208, 0.1);
 }
 .custom-input :deep(.el-input__prefix) {
   color: #9ca3af;
@@ -492,17 +492,17 @@ onMounted(() => {
   width: 100%;
   height: 48px;
   border-radius: 8px !important;
-  background: linear-gradient(135deg, #7c3aed, #4f46e5) !important;
+  background: linear-gradient(135deg, #6d4bd0, #6d4bd0) !important;
   border: none !important;
   font-size: 16px;
   font-weight: 600;
   letter-spacing: 4px;
-  box-shadow: 0 6px 20px rgba(79, 70, 229, 0.3) !important;
+  box-shadow: 0 6px 20px rgba(109, 75, 208, 0.3) !important;
   transition: all 0.2s !important;
 }
 .submit-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 10px 24px rgba(79, 70, 229, 0.4) !important;
+  box-shadow: 0 10px 24px rgba(109, 75, 208, 0.4) !important;
 }
 .submit-btn:active {
   transform: translateY(0);
@@ -522,7 +522,7 @@ onMounted(() => {
 .agreement {
   margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid #f5f5f5;
+  border-top: 1px solid #f4f3f1;
 }
 .agreement :deep(.el-checkbox__label) {
   font-size: 12px;
@@ -557,7 +557,7 @@ onMounted(() => {
   font-size: 13px;
 }
 .guest-btn:hover {
-  color: #7c3aed !important;
+  color: #6d4bd0 !important;
 }
 
 @media (max-width: 900px) {

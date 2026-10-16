@@ -233,7 +233,9 @@ P2 · 可以做
         ★ 为什么不是 findById：findById 谁都能查，越权就藏在这一步。
           把 userId 写进查询条件 = 让数据库做安全检查，
           比"查出来再 if 判断是不是自己的"可靠（后者容易忘了判）
-        ⚠⚠ 但调用方 top()/remove() 传的 deleted=1（应为 0）→ 见问题 25
+        ★ 2026-10-14 36405de：调用方 top()/remove() 改为传 **0**
+          （dc8f67a 曾误传 1 ⇒ 在架记录 500，即问题 25 回归）
+        ⚠ 判据未跑 ⇒ 见问题清单 25，状态 🟠 待验证
     Page<Bookshelf> findByUserIdAndDeleted(Integer, Integer, Pageable)
         recent_read / recent_add 两种排序共用（只换 Sort 对象）
     Page<Bookshelf> findPageOrderByNovelUpdate(Integer, Pageable)
@@ -311,8 +313,9 @@ P2 · 可以做
   ★ 软删除：移出书架是 deleted=1，不是 DELETE 行
     ⇒ 以后所有书架查询都必须带 deleted = 0，漏了就查出已删除的
     ✅ 2026-10-14：top() / remove() 已改用带 deleted 条件的查询（问题 23 的方向）
-    ⚠⚠ 但把 deleted 传成了 **1**（1 是"已删"，0 才是"存在"）—— 反了
-      ⇒ 在架记录的置顶 / 移出全部 500。见问题清单 25，未修
+    ★ 中途踩过坑：dc8f67a 把 deleted 传成了 **1**（1 是"已删"，0 才是"存在"）—— 反了
+      ⇒ 在架记录的置顶 / 移出全部 500（问题 25 回归）
+    ✅ 2026-10-14 提交 36405de 已改回 **0**；🟠 判据未跑，见问题清单 25
 
 【冗余字段】
   novel.total_words
@@ -330,13 +333,15 @@ P2 · 可以做
   ★ 那 prod 的表结构从哪来？→ docker/mysql/init/01-schema.sql，
     由 MySQL 官方 initdb 机制在**数据目录为空时执行一次**（问题 18 的修法）
     ⇒ 它就是 prod 的"迁移脚本"，改表结构必须同步它
-    ⚠ 2026-10-08 实测：这个脚本现在是**坏的**（两份 dump 拼接 + 缺 bookshelf）
-      → 详见 docs/项目笔记/问题清单.txt 问题 20
+    ✅ 2026-10-16 已实测正常：4 张表齐全 + `down -v` 演练通过 + prod validate 起得来
+       ★ 历史（2026-10-08）：曾有两份 dump 拼接 + 缺 bookshelf
+         → 2026-10-13 已修；详见 docs/项目笔记/问题清单.txt 问题 20
 
-【★ 两个 MySQL 实例（2026-10-08 实测）】
-  本机 localhost:3306  ← dev 连它，ddl-auto=update 会自动改表（权威库）
-  容器 localhost:3307  ← prod 连它，结构来自 01-schema.sql（演练用）
-  ⇒ 两个库独立，本机加了列容器不会有
+【★ 只剩一个 MySQL 了（2026-10-16 变更，详见问题清单 26）】
+  容器 localhost:3307  ← dev 和 prod 都连它（唯一权威库）
+  ⇒ 历史（2026-10-08 ~ 10-16）：曾有两个实例（本机 3306 + 容器 3307），
+    两者独立、数据不互通 —— "环境漂移"的典型。
+    ★ 最坑的后果：down -v 清的是没人用的那个库，**验证的是空气**。
   ⇒ 详细说明见 docs/项目说明-给AI.txt 第五节「环境与启动」
 
 

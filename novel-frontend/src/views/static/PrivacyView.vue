@@ -100,7 +100,7 @@ import StaticPageLayout from '../../components/StaticPageLayout.vue'
 .footer-note {
   margin-top: 32px;
   padding-top: 20px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid #ececea;
   color: #999;
   font-size: 12px;
   text-align: center;

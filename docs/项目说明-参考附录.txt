@@ -129,7 +129,7 @@
   ├── src/api/index.js                 ★ axios 实例（自动带 Token，401 跳登录）
   ├── src/api/novel.js                 列表/详情/章节CRUD/上传/排行榜
   ├── src/api/bookshelf.js             ★ 书架 5 个接口 + 阅读进度
-  ├── src/api/user.js                  登录/注册
+  ├── src/api/user.js                  登录/注册/退出（退出通知后端拉黑 token）
   ├── src/composables/                 ★ 组合式函数（2026-10-14 新增）
   │   ├── useAuth.js                   登录态 / 权限 / 用户名 / 退出
   │   │                                  ★ 各 View 直接 import 它，不用 props 传

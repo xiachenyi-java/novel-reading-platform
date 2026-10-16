@@ -55,7 +55,7 @@ public class BookshelfController {
     @Operation(summary = "置顶/取消置顶")
     @PutMapping("/{id}/top")
     public Result<Void> top(@PathVariable  Integer id,
-                                 @RequestBody  @Valid BookshelfTopDTO dto){
+                            @RequestBody  @Valid BookshelfTopDTO dto){
 
         Integer userId = UserContext.getUser().getUserId();
 

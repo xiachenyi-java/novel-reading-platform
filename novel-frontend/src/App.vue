@@ -25,8 +25,11 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     'PingFang SC', 'Microsoft YaHei', sans-serif;
   font-size: var(--fs-base);
-  line-height: 1.5; /* 正文行高统一 1.5 */
-  color: var(--text-2);
+  /* 正文行高：1.5 → 1.7（2026-10-15 跟设计稿对齐）。
+     中文比英文更需要行距，1.5 会显得字挤在一起；
+     1.7 是这批设计稿统一用的值，别再单独调。 */
+  line-height: 1.7;
+  color: var(--ink-2);
   background: var(--bg-page);
 }
 

@@ -6,7 +6,7 @@
   >
     <h2>一、协议说明</h2>
     <p>
-      欢迎使用「夏辰义的书城」（以下称「本站」）。
+      欢迎使用「草莓」（以下称「本站」）。
       本站是由个人独立开发的<strong>学习项目</strong>，不以营利为目的。
       在你使用本站服务前，请仔细阅读本协议。
       你使用本站任何功能，即视为已同意本协议全部内容。
@@ -97,7 +97,7 @@ import StaticPageLayout from '../../components/StaticPageLayout.vue'
 .footer-note {
   margin-top: 32px;
   padding-top: 20px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid #ececea;
   color: #999;
   font-size: 12px;
   text-align: center;

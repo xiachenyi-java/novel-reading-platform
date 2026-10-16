@@ -1,51 +1,50 @@
 <template>
-  <div class="shelf-wrapper">
-    <!-- ===== 顶部导航 ===== -->
-    <header class="header">
-      <div class="header-inner">
-        <div class="header-left">
-          <span class="brand" @click="$router.push('/')">📚 夏辰义的书城</span>
-          <span class="page-title">我的书架</span>
-        </div>
-        <div class="header-right">
-          <span class="welcome">欢迎回来，{{ username }}</span>
-          <el-button size="small" @click="$router.push('/')">← 返回书城</el-button>
-          <el-button type="danger" size="small" @click="handleLogout">退出</el-button>
-        </div>
-      </div>
-    </header>
+  <div class="page">
+    <!-- 顶栏：全站统一（2026-10-16 接上，之前这页自己写了一份 header）-->
+    <SiteHeader>
+      <template #right>
+        <span class="welcome">欢迎回来，{{ username }}</span>
+        <el-button size="small" @click="$router.push('/store')">返回书城</el-button>
+        <el-button type="danger" size="small" @click="handleLogout">退出</el-button>
+      </template>
+    </SiteHeader>
 
     <div class="container">
+      <!-- ===== 页头 ===== -->
+      <div class="head">
+        <h1>我的书架</h1>
+        <p>读到哪儿都记着 —— 挑一本，接着往下看</p>
+      </div>
+
       <!-- ===== 工具栏：排序 + 批量操作 ===== -->
       <div class="toolbar">
-        <div class="sort-tabs">
-          <span
+        <div class="chips">
+          <a
             v-for="tab in sortTabs"
             :key="tab.value"
-            class="sort-tab"
-            :class="{ active: sort === tab.value }"
+            :class="{ on: sort === tab.value }"
             @click="switchSort(tab.value)"
           >
             {{ tab.label }}
-          </span>
+          </a>
         </div>
 
         <div class="toolbar-right">
           <template v-if="selectedIds.length > 0">
             <span class="selected-count">已选 {{ selectedIds.length }} 本</span>
             <el-button type="danger" size="small" @click="handleBatchRemove">
-              批量移出
+              把这 {{ selectedIds.length }} 本移出
             </el-button>
             <el-button size="small" @click="clearSelection">取消选择</el-button>
           </template>
-          <span v-else class="toolbar-tip">勾选左侧方框可批量移出</span>
+          <span v-else class="toolbar-tip">点一下左边的方框，能一次搬走好几本</span>
         </div>
       </div>
 
       <!-- ===== 加载中 ===== -->
       <div v-if="loading" class="state-box">
-        <el-icon class="is-loading" :size="36"><Loading /></el-icon>
-        <p>加载书架中...</p>
+        <el-icon class="is-loading" :size="32"><Loading /></el-icon>
+        <p>正在取你的书架…</p>
       </div>
 
       <!-- ===== 列表 ===== -->
@@ -54,7 +53,7 @@
           v-for="item in list"
           :key="item.id"
           class="shelf-item"
-          :class="{ 'is-top': item.isTop === 1 }"
+          :class="{ 'is-top': item.top }"
         >
           <el-checkbox
             :model-value="selectedIds.includes(item.id)"
@@ -62,10 +61,14 @@
             class="item-checkbox"
           />
 
-          <div class="item-cover" @click="goDetail(item.novelId)">
+          <!-- 封面：有图用图，没图用"书名色块"（颜色由书名算，全站一致）-->
+          <div class="item-cover" :class="coverColor(item.title)" @click="goDetail(item.novelId)">
             <img v-if="item.coverUrl" :src="item.coverUrl" alt="封面" />
-            <span v-else class="cover-placeholder">📖</span>
-            <div v-if="item.isTop === 1" class="top-badge">📌 置顶</div>
+            <template v-else>{{ item.title || '未命名' }}</template>
+            <!-- ★ 字段名是 top（后端 VO 里是 Boolean），不是 isTop（1/0）。
+                 原来读 item.isTop 永远是 undefined —— 这个"置顶"角标
+                 从来没有显示过。 -->
+            <div v-if="item.top" class="top-badge">置顶</div>
           </div>
 
           <div class="item-info">
@@ -75,67 +78,63 @@
 
             <p class="item-meta">
               <span>{{ item.author || '佚名' }}</span>
-              <span v-if="item.category">· {{ item.category }}</span>
+              <span v-if="item.category" class="dot">·</span>
+              <span v-if="item.category">{{ item.category }}</span>
               <span v-if="item.status" class="item-status" :class="statusClass(item.status)">
                 {{ statusText(item.status) }}
               </span>
             </p>
 
-            <p class="item-progress">
-              <template v-if="item.lastReadChapterNumber">
-                📖 读到第 {{ item.lastReadChapterNumber }} 章
-              </template>
-              <template v-else>📖 尚未开始阅读</template>
-              <template v-if="item.totalChapters">
-                <span class="divider">·</span>共 {{ item.totalChapters }} 章
-              </template>
-            </p>
+            <!-- 进度：文案统一由 progressText 生成，刻意不说"第几章" ——
+                 后端没给章节号，编一个数字出来比不写更糟 -->
+            <p class="item-progress">{{ progressText(item) }}</p>
 
-            <p class="item-update" v-if="item.latestChapterTitle">
-              🆕 最新章节：{{ item.latestChapterTitle }}
+            <!-- 更新 + 字数：两个都是后端真有的字段 -->
+            <p class="item-update" v-if="item.lastUpdateTime || item.totalWords">
+              <template v-if="item.lastUpdateTime">
+                {{ relativeTime(item.lastUpdateTime) }}更新过
+              </template>
+              <template v-if="item.lastUpdateTime && item.totalWords">
+                <span class="dot">·</span>
+              </template>
+              <template v-if="item.totalWords">{{ formatWords(item.totalWords) }}</template>
             </p>
           </div>
 
+          <!-- 动作：主按钮用近黑（跟全站一致），次要动作是白底描边 -->
           <div class="item-actions">
-            <el-button
-              size="small"
-              :type="item.isTop === 1 ? 'warning' : 'default'"
-              plain
-              @click="handleToggleTop(item)"
-            >
-              {{ item.isTop === 1 ? '取消置顶' : '置顶' }}
-            </el-button>
+            <button v-if="item.lastReadChapterId" class="btn-primary" @click="continueRead(item)">
+              接着读
+            </button>
+            <button v-else class="btn-primary" @click="startRead(item)">开始读</button>
 
-            <el-button
-              v-if="item.lastReadChapterId"
-              type="primary"
-              size="small"
-              @click="continueRead(item)"
-            >
-              继续阅读
-            </el-button>
-            <el-button
-              v-else
-              type="primary"
-              size="small"
-              @click="startRead(item)"
-            >
-              开始阅读
-            </el-button>
+            <button class="btn-ghost" @click="handleToggleTop(item)">
+              {{ item.top ? '取消置顶' : '置顶' }}
+            </button>
 
-            <el-button type="danger" size="small" plain @click="handleRemove(item)">
-              移出
-            </el-button>
+            <button class="btn-ghost danger" @click="handleRemove(item)">移出</button>
           </div>
         </div>
       </div>
 
+      <!-- ===== 报错态 ===== -->
+      <!-- 顺序很关键：先"有数据"，再"出错了"，最后才是"真的没有"。
+           以前没有这一段，接口一挂就显示"书架还是空的" ——
+           用户根本看不出是坏了，还是自己真没收藏过书。 -->
+      <div v-else-if="loadError" class="state-box">
+        <div class="state-emoji">🔌</div>
+        <p>书架没打开</p>
+        <p class="state-sub">{{ errorMsg }}</p>
+        <el-button type="primary" class="state-btn" @click="retry">重试</el-button>
+      </div>
+
       <!-- ===== 空态 ===== -->
       <div v-else class="state-box">
-        <div style="font-size:64px;opacity:0.25;">📭</div>
+        <div class="state-emoji">🍓</div>
         <p>书架还是空的</p>
-        <el-button type="primary" @click="$router.push('/')" style="margin-top:12px;">
-          去书城逛逛
+        <p class="state-sub">你还没往这儿放过书。挑一本，今晚就有得看了</p>
+        <el-button type="primary" class="state-btn" @click="$router.push('/store')">
+          去书城挑一本
         </el-button>
       </div>
 
@@ -169,6 +168,10 @@ import {
 import { getNovelDetail } from '../api/novel'
 import { usePagination } from '../composables/usePagination'
 import { useAuth } from '../composables/useAuth'
+import SiteHeader from '../components/SiteHeader.vue'
+// 把后端的时间 / 数字变成人话（"昨天"、"12.3 万字"）—— 全站共用一份
+import { relativeTime, formatWords } from '../utils/format'
+import { coverColor } from '../mock/data'
 
 const router = useRouter()
 
@@ -186,6 +189,13 @@ const sortTabs = [
 const sort = ref('RECENT_READ')
 const selectedIds = ref([])
 
+// ===== 报错态 =====
+// ★ 这是原来没有的东西。以前接口挂了，页面会走到"空态"分支显示"书架还是空的"
+//   —— 用户分不清"我真没收藏"和"它坏了"（前端说明第十章记着这个已知问题）。
+//   现在把"出错"单独拎出来，当成一个正经状态来对待。
+const loadError = ref(false)
+const errorMsg = ref('')
+
 // ===== 分页（统一逻辑）=====
 const {
   page,
@@ -200,11 +210,19 @@ const {
   reset
 } = usePagination(
   async (p, s) => {
+    // ★ 每次真发起请求前先清掉上一次的错误。
+    //   否则"重试成功了，错误框还挂在上面"—— 那种界面比报错更让人糊涂。
+    loadError.value = false
+    errorMsg.value = ''
+
     const res = await getBookshelfList(p, s, sort.value)
     const body = res.data
 
     if (body.code !== 200) {
-      ElMessage.error(body.msg || '加载书架失败')
+      // 业务失败（比如登录过期）：不弹 toast，改成让错误态一直挂在页面上 ——
+      // toast 两秒就没了，用户回头根本看不见发生过什么
+      loadError.value = true
+      errorMsg.value = body.msg || '后端返回了错误'
       return { list: [], total: 0 }
     }
 
@@ -217,7 +235,12 @@ const {
   {
     initialSize: 10,
     pageSizes: [10, 20, 30],
-    onError: () => ElMessage.error('加载书架失败')
+    // 网络层失败（后端没起 / 断网）走这里，同样落进报错态
+    onError: (e) => {
+      console.error('[书架] 加载失败:', e)
+      loadError.value = true
+      errorMsg.value = '没连上服务器，检查一下后端起了没'
+    }
   }
 )
 
@@ -238,6 +261,25 @@ const statusClass = (s) => {
   if (s === 'FINISHED') return 'finished'
   return ''
 }
+
+/**
+ * 进度文案 —— 书架卡片上那句"人话"
+ * ★ 关键：后端只给了 lastReadChapterId（读到哪一章的 id）和 lastReadTime，
+ *   **没给章节号，也没给总章数**。所以这里绝不写"读到第 12 章 / 还剩 18 章"——
+ *   编一个数字出来，比不写更糟（点两下就露馅了）。
+ *   要显示"第 N 章"得后端补字段，已记进 docs/设计/前端改版-设计方案.txt。
+ */
+const progressText = (item) => {
+  if (item.lastReadChapterId) {
+    const when = relativeTime(item.lastReadTime)
+    return when ? `在读 · ${when}读到这儿` : '在读'
+  }
+  const added = relativeTime(item.createTime)
+  return added ? `还没开始 · ${added}加进来的` : '还没开始'
+}
+
+// 报错态里的「重试」：把当前页重新拉一次
+const retry = () => loadList()
 
 // ===== 排序切换 =====
 const switchSort = (val) => {
@@ -289,13 +331,16 @@ const startRead = async (item) => {
     })
   } catch (e) {
     console.error('加载章节失败:', e)
-    ElMessage.error('加载章节失败')
+    ElMessage.error('章节没加载出来，再试一次')
   }
 }
 
 // ===== 置顶 / 取消置顶 =====
 const handleToggleTop = async (item) => {
-  const newTop = item.isTop !== 1
+  // ★ 后端 VO 里叫 top（true / false），不是 isTop（1 / 0）。
+  //   原来读 item.isTop 永远是 undefined → newTop 永远是 true，
+  //   所以"置顶"只能设成置顶、**永远取消不掉**，按钮文案也一直卡在"置顶"。
+  const newTop = !item.top
   try {
     const res = await toggleTop(item.id, newTop)
     if (res.data.code === 200) {
@@ -313,9 +358,12 @@ const handleToggleTop = async (item) => {
 // ===== 移出单个 =====
 const handleRemove = (item) => {
   ElMessageBox.confirm(
-    `确定把《${item.title || '这本小说'}》移出书架吗？`,
+    // ★ 后半句不是客套：移出书架时后端会连 Redis 里的 progress:* 一起删
+    //   （BookshelfServiceIml 的 remove / 批量移出里都有这一步），
+    //   阅读进度是真的会丢。用户有权在按下按钮之前就知道。
+    `把《${item.title || '这本'}》移出书架？阅读进度也会一起清掉。`,
     '提示',
-    { confirmButtonText: '确定移出', cancelButtonText: '取消', type: 'warning' }
+    { confirmButtonText: '移出', cancelButtonText: '再想想', type: 'warning' }
   )
     .then(async () => {
       try {
@@ -338,15 +386,15 @@ const handleRemove = (item) => {
 const handleBatchRemove = () => {
   if (selectedIds.value.length === 0) return
   ElMessageBox.confirm(
-    `确定把选中的 ${selectedIds.value.length} 本移出书架吗？`,
+    `把这 ${selectedIds.value.length} 本移出书架？阅读进度也会一起清掉。`,
     '提示',
-    { confirmButtonText: '确定移出', cancelButtonText: '取消', type: 'warning' }
+    { confirmButtonText: '移出', cancelButtonText: '再想想', type: 'warning' }
   )
     .then(async () => {
       try {
         const res = await batchRemoveFromBookshelf([...selectedIds.value])
         if (res.data.code === 200) {
-          ElMessage.success('批量移出成功')
+          ElMessage.success('已移出选中的书')
           selectedIds.value = []
           loadList()
         } else {
@@ -377,120 +425,102 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.shelf-wrapper {
+/* ============================================================
+   我的书架
+   ------------------------------------------------------------
+   对标番茄小说：卡片流 + 阅读进度看得见。
+   ★ 但这页真正的重点是**那句进度文案**（"在读 · 昨晚读到这儿"）——
+     所以卡片是横条不是竖格子：那句话需要一行横向的空间才读得舒服。
+   配色沿用草莓这套。
+   ============================================================ */
+.page {
   min-height: 100vh;
-  background: #f5f7fa;
+  background: var(--bg-page);
 }
-
-.header {
-  background: white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  padding: 12px 0;
-}
-.header-inner {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 20px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-.brand {
-  font-size: 22px;
-  font-weight: 700;
-  cursor: pointer;
-  background: linear-gradient(135deg, #7c3aed, #4f46e5);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-.page-title {
-  font-size: 16px;
-  color: #666;
-  padding-left: 16px;
-  border-left: 1px solid #e8e8e8;
-}
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.welcome {
-  color: #999;
-  font-size: 14px;
-}
-
 .container {
-  max-width: 1200px;
+  max-width: 1120px;
   margin: 0 auto;
-  padding: 20px 20px 40px;
+  padding: 0 24px 60px;
 }
 
+/* 导航栏右侧那行小字（样式留在本页 —— 它是塞进 SiteHeader 插槽的内容）*/
+.welcome {
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+/* ===== 页头 ===== */
+.head {
+  padding: 38px 0 20px;
+}
+.head h1 {
+  font-size: var(--fs-3xl);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--ink);
+}
+.head p {
+  font-size: var(--fs-base);
+  color: var(--ink-3);
+  margin-top: 8px;
+}
+
+/* ===== 工具栏 ===== */
 .toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: white;
-  border-radius: 12px;
+  gap: 16px;
+  background: #fff;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
   padding: 12px 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
   margin-bottom: 16px;
+  flex-wrap: wrap;
 }
-.sort-tabs {
+.chips {
   display: flex;
-  gap: 6px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
-.sort-tab {
-  padding: 6px 18px;
-  border-radius: 20px;
+.chips a {
+  font-size: var(--fs-sm);
+  padding: 6px 15px;
+  border-radius: var(--radius-full);
+  background: #fff;
+  color: var(--ink-2);
+  border: 1px solid var(--line);
   cursor: pointer;
-  font-size: 14px;
-  color: #666;
-  transition: all 0.25s;
+  transition: all var(--t-base);
 }
-.sort-tab:hover {
-  color: #7c3aed;
-  background: #f3f0ff;
+.chips a:hover {
+  border-color: var(--ink-4);
+  color: var(--ink);
 }
-.sort-tab.active {
-  color: white;
-  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+.chips a.on {
+  background: var(--ink);
+  color: #fff;
+  border-color: var(--ink);
+  font-weight: 600;
 }
 .toolbar-right {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
 }
 .selected-count {
-  color: #7c3aed;
+  color: var(--ink);
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--fs-sm);
 }
 .toolbar-tip {
-  color: #bbb;
-  font-size: 13px;
+  color: var(--ink-4);
+  font-size: var(--fs-xs);
 }
 
-.state-box {
-  background: white;
-  border-radius: 12px;
-  padding: 60px 20px;
-  text-align: center;
-  color: #999;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-}
-.state-box p {
-  margin-top: 12px;
-  font-size: 15px;
-}
-
+/* ===== 书架列表 ===== */
 .shelf-list {
   display: flex;
   flex-direction: column;
@@ -499,164 +529,242 @@ onMounted(() => {
 .shelf-item {
   display: flex;
   align-items: center;
-  background: white;
-  border-radius: 12px;
+  gap: 16px;
+  background: #fff;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
   padding: 16px 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-  transition: box-shadow 0.2s, transform 0.2s;
-  border-left: 4px solid transparent;
+  transition: box-shadow var(--t-base);
+  border-left: 3px solid transparent;
 }
 .shelf-item:hover {
-  box-shadow: 0 6px 20px rgba(124, 58, 237, 0.12);
-  transform: translateY(-1px);
+  box-shadow: var(--shadow-hover);
 }
+/* 置顶的那本：左边一条琥珀色（用避雷那支色，不另发明新色）*/
 .shelf-item.is-top {
-  border-left-color: #f59e0b;
-  background: linear-gradient(90deg, #fffbeb 0%, #ffffff 60%);
+  border-left-color: var(--warn);
 }
 .item-checkbox {
   flex-shrink: 0;
-  margin-right: 12px;
 }
 
+/* 封面 */
 .item-cover {
+  position: relative;
   flex-shrink: 0;
   width: 72px;
   height: 96px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #e0d7ff, #c4b5fd);
+  border-radius: 5px;
   display: flex;
-  justify-content: center;
   align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  padding: 6px;
   overflow: hidden;
   cursor: pointer;
-  position: relative;
+  letter-spacing: 0.4px;
 }
 .item-cover img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
-.cover-placeholder {
-  font-size: 32px;
-  opacity: 0.6;
-}
 .top-badge {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  background: linear-gradient(90deg, #f59e0b, #fbbf24);
-  color: white;
-  font-size: 11px;
+  background: var(--warn);
+  color: #fff;
+  font-size: 10px;
   text-align: center;
   padding: 2px 0;
+  letter-spacing: 1px;
 }
 
+/* 中间信息 */
 .item-info {
   flex: 1;
-  padding: 0 20px;
   min-width: 0;
 }
 .item-title {
   margin: 0 0 6px 0;
-  font-size: 16px;
-  color: #1a1a2e;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--ink);
   cursor: pointer;
-  transition: color 0.2s;
+  transition: color var(--t-base);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .item-title:hover {
-  color: #7c3aed;
+  color: var(--brand);
 }
 .item-meta {
-  font-size: 13px;
-  color: #888;
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
   margin-bottom: 6px;
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
 }
-.item-meta span {
-  white-space: nowrap;
+.item-meta .dot {
+  color: var(--ink-4);
 }
 .item-status {
   padding: 1px 8px;
-  border-radius: 10px;
-  font-size: 12px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
 }
+/* 连载中 = 琥珀（还没完，别急着入坑）｜已完结 = 青绿（放心读）*/
 .item-status.ongoing {
-  color: #d97706;
-  background: #fef3c7;
+  color: var(--warn);
+  background: var(--warn-bg);
 }
 .item-status.finished {
-  color: #059669;
-  background: #d1fae5;
+  color: var(--rec);
+  background: var(--rec-bg);
 }
+/* ★ 这行是这页的主角：进度说人话 */
 .item-progress {
-  font-size: 13px;
-  color: #666;
+  font-size: 13.5px;
+  color: var(--ink-2);
   margin-bottom: 4px;
 }
-.item-progress .divider {
-  margin: 0 6px;
-  color: #ccc;
-}
 .item-update {
-  font-size: 12px;
-  color: #999;
+  font-size: var(--fs-xs);
+  color: var(--ink-4);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.item-update .dot {
+  margin: 0 4px;
+}
 
+/* 动作 */
 .item-actions {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: 110px;
+  width: 104px;
 }
-.item-actions .el-button {
+.item-actions button {
   width: 100%;
-  margin-left: 0 !important;
+  padding: 7px 0;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all var(--t-base);
+}
+/* 主按钮近黑 —— 跟全站一致（设计稿里主按钮就不是紫的）*/
+.btn-primary {
+  background: var(--ink);
+  color: #fff;
+  border: 1px solid var(--ink);
+}
+.btn-primary:hover {
+  opacity: 0.86;
+}
+.btn-ghost {
+  background: #fff;
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+}
+.btn-ghost:hover {
+  border-color: var(--ink-4);
+  color: var(--ink);
+}
+/* 移出是破坏性操作：平时低调，hover 才变红 */
+.btn-ghost.danger:hover {
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
+/* ===== 三态 ===== */
+.state-box {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--ink-3);
+}
+.state-box p {
+  margin-top: 12px;
+  font-size: var(--fs-md);
+}
+.state-box .state-emoji {
+  font-size: 56px;
+  line-height: 1;
+  opacity: 0.3;
+}
+.state-box .state-sub {
+  margin-top: 8px;
+  font-size: var(--fs-sm);
+  color: var(--ink-4);
+}
+.state-btn {
+  margin-top: 16px;
+}
+.is-loading {
+  animation: rotate 1.5s linear infinite;
+}
+@keyframes rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ===== 分页 ===== */
 .pagination-box {
   display: flex;
   justify-content: center;
   margin-top: 24px;
 }
-
-.is-loading {
-  animation: rotate 1.5s linear infinite;
-}
-@keyframes rotate {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+.pagination-box :deep(.el-pagination) {
+  --el-pagination-font-size: var(--fs-sm);
 }
 
+/* ===== 窄屏 ===== */
 @media (max-width: 768px) {
-  .header-inner {
-    flex-direction: column;
-    gap: 10px;
+  .container {
+    padding: 0 16px 40px;
+  }
+  .head h1 {
+    font-size: var(--fs-2xl);
+  }
+  .welcome {
+    display: none;
   }
   .toolbar {
     flex-direction: column;
-    gap: 10px;
     align-items: stretch;
+    gap: 10px;
   }
+  .chips,
   .toolbar-right {
     justify-content: center;
   }
+  /* 手机上：封面和文字一行，动作按钮铺满一整行放下面 */
   .shelf-item {
     flex-wrap: wrap;
     gap: 12px;
   }
   .item-info {
-    padding: 0;
+    min-width: 160px;
   }
   .item-actions {
     width: 100%;

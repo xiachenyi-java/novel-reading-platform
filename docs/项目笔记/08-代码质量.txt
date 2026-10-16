@@ -137,25 +137,26 @@
         全部保留原状未改，等你自己决定怎么处理。
 
 --------------------------------------------------------------------------------
-N1  ★ 黑名单过期判断的边界不一致
+N1  ★ 黑名单过期判断的边界不一致  →  ✅ 已解决（2026-10-16 核实）
 --------------------------------------------------------------------------------
-  位置：config/LoginInterceptor.java
-    游客路径（约 69 行）：  if (expireAt >= System.currentTimeMillis())
-    严格路径（约 116 行）： if (expireAt >  System.currentTimeMillis())
+  ★ 实际现状：**修法已经落地了** —— 两处比较抽成了共用的私有方法
+      private boolean isBlacklisted(Integer userId, String token)
+    定义在 LoginInterceptor.java:157，游客路径（:64）和严格路径（:101）**都调它**。
+    全文只剩**一处**时间比较（:178 的 >=）⇒ "两处不一致"已不成立。
 
-  【问题】两处做的是同一件事（判断 token 在不在黑名单），
+  ── 以下为原记录（已过期，留档）──
+  位置：config/LoginInterceptor.java
+    游客路径（原记约 69 行）：  if (expireAt >= System.currentTimeMillis())
+    严格路径（原记约 116 行）： if (expireAt >  System.currentTimeMillis())
+
+  【原问题】两处做的是同一件事（判断 token 在不在黑名单），
           但一个用 >=，一个用 >。
 
-  【后果】当 expireAt 恰好等于当前毫秒时，两条路径行为不同：
+  【原后果】当 expireAt 恰好等于当前毫秒时，两条路径行为不同：
             · 游客路径 → 当作"已过期"，删除后放行
             · 严格路径 → 当作"仍在黑名单"，返回 401
-          毫秒级窗口，实际影响很小。但"同一逻辑两处实现不一致"
-          是将来埋 bug 的典型位置。
 
-  【修法】统一成一个私有方法，两处共用：
-            private boolean isBlacklisted(String hashKey, String token)
-
-  【验证】构造一个 expireAt = 当前毫秒 的 token，两条路径行为应一致。
+  【原修法】统一成一个私有方法，两处共用 —— ✅ 已按此实现
 
 --------------------------------------------------------------------------------
 N2  passwordHash 被写进 Redis 缓存
@@ -170,7 +171,8 @@ N2  passwordHash 被写进 Redis 缓存
   【后果】BCrypt 哈希被写进 Redis。虽然哈希不能直接反推密码，
           但 Redis 一旦泄露（未授权访问、快照文件泄露），
           攻击者拿到哈希可以离线暴力破解。
-          ★ 这条在 项目说明-给AI.txt 里是已知问题 4，一直没修。
+          ★ 这条是问题清单里的**问题 5**（原来写"已知问题 4"是**引用错了** ——
+            4 是"上传只校验 Content-Type"，2026-10-16 更正），一直没修。
 
   【修法】二选一：
     a) 写缓存前 dbUser.setPasswordHash(null)

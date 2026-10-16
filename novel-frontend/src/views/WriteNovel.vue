@@ -2,7 +2,7 @@
   <div class="write-wrapper">
     <header class="header">
       <div class="header-left">
-        <span class="brand">📚 夏辰义的书城</span>
+        <span class="brand">草莓</span>
       </div>
       <div class="header-right">
         <el-button size="small" @click="$router.push('/')">← 返回书城</el-button>
@@ -169,7 +169,7 @@ const resetForm = () => {
 <style scoped>
 .write-wrapper {
   min-height: 100vh;
-  background: #f5f7fa;
+  background: #faf9f7;
 }
 .header {
   display: flex;
@@ -206,11 +206,11 @@ const resetForm = () => {
   display: flex;
   justify-content: center;
   align-items: center;
-  background: #fafafa;
+  background: #faf9f7;
   transition: border-color 0.3s;
 }
 .avatar-uploader:hover {
-  border-color: #7c3aed;
+  border-color: #6d4bd0;
 }
 .avatar-uploader-icon {
   font-size: 28px;

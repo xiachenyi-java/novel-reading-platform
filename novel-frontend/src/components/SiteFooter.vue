@@ -12,7 +12,7 @@
       <router-link to="/feedback">意见反馈</router-link>
     </div>
     <p class="copyright">
-      Copyright © 2026 夏辰义的书城 · 保留所有权利
+      Copyright © 2026 草莓 · 保留所有权利
     </p>
     <p class="copyright-sub">
       本站为个人学习项目，所有内容仅用于技术演示，不存储任何第三方作品正文
@@ -23,7 +23,7 @@
 <style scoped>
 .site-footer {
   background: #fff;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid #ececea;
   padding: 24px 20px 20px;
   text-align: center;
   flex-shrink: 0;
@@ -43,7 +43,7 @@
   transition: color 0.2s;
 }
 .footer-links a:hover {
-  color: #7c3aed;
+  color: #6d4bd0;
 }
 .footer-links .divider {
   color: #ddd;

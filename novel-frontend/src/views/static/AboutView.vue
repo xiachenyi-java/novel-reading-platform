@@ -14,7 +14,7 @@
 
     <h2>关于本站</h2>
     <p>
-      「<strong>夏辰义的书城</strong>」是一个个人学习项目，
+      「<strong>草莓</strong>」是一个个人学习项目，
       定位是「小说推荐 + 私人阅读空间」的交流平台。
       我们不提供小说正文的在线阅读服务，而是把重点放在
       <strong>发现好书、整理书单、记录阅读</strong> 这三件事上。
@@ -67,9 +67,9 @@ import StaticPageLayout from '../../components/StaticPageLayout.vue'
 .footer-note {
   margin-top: 28px;
   padding: 14px 18px;
-  background: #f5f2ff;
+  background: #f2eefb;
   border-radius: 8px;
-  color: #6d28d9;
+  color: #5b3cb8;
   font-size: 13px;
   text-align: center;
 }

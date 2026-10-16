@@ -153,7 +153,7 @@ watch(
 <style scoped>
 .read-wrapper {
   min-height: 100vh;
-  background: #f5f7fa;
+  background: #faf9f7;
 }
 .read-header {
   display: flex;
@@ -198,7 +198,7 @@ watch(
 .chapter-footer {
   margin-top: 40px;
   padding-top: 20px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid #ececea;
   color: #999;
   font-size: 14px;
   display: flex;

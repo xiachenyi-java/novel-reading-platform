@@ -4,7 +4,7 @@
       <div class="header-inner">
         <div class="brand" @click="$router.push('/')">
           <span class="brand-icon">📚</span>
-          <span class="brand-name">夏辰义的书城</span>
+          <span class="brand-name">草莓</span>
         </div>
         <el-button size="small" @click="$router.push('/')">← 返回首页</el-button>
       </div>
@@ -38,7 +38,7 @@ defineProps({
 <style scoped>
 .static-page {
   min-height: 100vh;
-  background: #f7f8fa;
+  background: #faf9f7;
   display: flex;
   flex-direction: column;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -46,7 +46,7 @@ defineProps({
 
 .static-header {
   background: #fff;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid #ececea;
   height: 60px;
   flex-shrink: 0;
   position: sticky;
@@ -73,7 +73,7 @@ defineProps({
 .brand-name {
   font-size: 20px;
   font-weight: 700;
-  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  background: linear-gradient(135deg, #6d4bd0, #6d4bd0);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -92,12 +92,12 @@ defineProps({
   border-radius: 12px;
   padding: 40px 48px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-  border: 1px solid #f0f0f0;
+  border: 1px solid #ececea;
 }
 .page-title {
   font-size: 26px;
   font-weight: 700;
-  color: #1a1a2e;
+  color: #1a1a1a;
   margin: 0 0 8px;
 }
 .page-subtitle {
@@ -110,7 +110,7 @@ defineProps({
   color: #bbb;
   margin: 0 0 28px;
   padding-bottom: 20px;
-  border-bottom: 1px solid #f5f5f5;
+  border-bottom: 1px solid #f4f3f1;
 }
 
 .page-body {
@@ -121,7 +121,7 @@ defineProps({
 .page-body :deep(h2) {
   font-size: 17px;
   font-weight: 600;
-  color: #1a1a2e;
+  color: #1a1a1a;
   margin: 28px 0 10px;
 }
 .page-body :deep(h2:first-child) {
@@ -138,14 +138,14 @@ defineProps({
   margin-bottom: 6px;
 }
 .page-body :deep(a) {
-  color: #7c3aed;
+  color: #6d4bd0;
   text-decoration: none;
 }
 .page-body :deep(a:hover) {
   text-decoration: underline;
 }
 .page-body :deep(strong) {
-  color: #1a1a2e;
+  color: #1a1a1a;
 }
 
 @media (max-width: 640px) {

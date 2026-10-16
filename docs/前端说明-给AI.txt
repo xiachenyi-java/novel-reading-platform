@@ -14,7 +14,8 @@
     因为它就是设计成整读的：读完这 347 行，前端相关的事就不用再翻别的文档了。
 
 【读取规矩】
-  · 前端所有代码在 novel-frontend/，共 17 个 .vue + 2 个组合式函数（2026-10-14 实测）
+  · 前端所有代码在 novel-frontend/，共 20 个 .vue + 2 个组合式函数 + 1 个工具文件
+    + 1 个假数据文件（2026-10-15 实测）
   · 单文件超 300 行时先 grep 定位再读片段（LoginView 573 / MyShelf 665 / NovelListView 591）
   · 查后端接口的**请求/返回细节** → 去《项目说明-参考附录.txt》附 A，本文件只列"前端调了哪些"
   · 查"前端做到哪了" → 《项目笔记/00-项目总览.txt》
@@ -27,6 +28,9 @@
 
   Vue            3.5.13        （Composition API + <script setup>）
   Element Plus   2.8.8         （+ @element-plus/icons-vue 2.3.1，main.js 里全局注册了所有图标）
+                               ★ 2026-10-14 起 main.js 传了 { locale: zhCn }（element-plus 自带的
+                                 es/locale/lang/zh-cn）—— 不传的话确认框按钮会是 OK/Cancel、
+                                 分页器和空状态是英文
   vue-router     4.4.5         （createWebHistory）
   axios          1.7.7
   pinia          2.2.6         ★ 装了也注册了，但**全项目没有用任何 store**，状态都走 composables/
@@ -63,6 +67,8 @@
   └── src/
       ├── main.js                   ★ 引入顺序：Element Plus → element-plus/dist/index.css
       │                               → styles/tokens.css → 再 use(router/pinia)
+      │                             ★ app.use(ElementPlus, { locale: zhCn }) —— 中文语言包，
+      │                               少了它全站内置文案（弹框按钮/分页器/空状态）都是英文
       ├── App.vue                   全局重置（* 盒模型 / body 字号行高底色）
       ├── styles/
       │   └── tokens.css            ★★ 设计变量，全站唯一定义处 —— 改样式前必读第三章
@@ -74,15 +80,39 @@
       │   ├── useAuth.js            isLogin / isAdmin / username / requireLogin / logout
       │   │                          ★ 各 View 直接 import，不用 props 层层传
       │   └── usePagination.js      分页状态复用（目前只有 MyShelf.vue 在用）
+      ├── utils/
+      │   ├── format.js             ★ 把机器数据变成人话（2026-10-15 新增）：
+      │   │                           relativeTime() 相对时间 —— "2026-10-13T22:41"
+      │   │                           变成"昨晚"；formatWords() 字数 —— 123456
+      │   │                           变成"12.3 万字"。书架页在用；设计稿里那几个
+      │   │                           页面要"昨晚"也是 import 这一份，别各写一份
+      │   └── normalize.js          ★ 接口返回字段名兼容（2026-10-16 新增）：
+      │                               rankItem() / rankList() —— 排行榜接口的字段名
+      │                               是**大写开头**的（NovelId/Title/Heat），
+      │                               不转一道就会永远读到 undefined。
+      │                               详见第七章 api/novel.js
+      ├── mock/
+      │   └── data.js               ★★ 假数据（2026-10-15 新增）—— **只有这一份**，
+      │                                发现/书单/作者/详情 4 个页面共用：
+      │                                BOOKS（书，id 9xxx）/ POSTS（内容流）/
+      │                                BOOKLISTS（书单）/ AUTHORS（含 isAi）/
+      │                                coverColor()（书名→固定封面色）/ timeAgo()
+      │                             ★ 后端没有这些接口之前，页面全靠它；
+      │                               接口好了把 import 换成真实 api 即可，页面不用动
+      │                             ★ 缺口清单在 docs/设计/前端改版-设计方案.txt
       ├── api/
       │   ├── index.js              ★ axios 实例 + 请求拦截（带 Token）+ 响应拦截（401/403）
       │   ├── novel.js              小说/章节/上传/分类/排行榜
       │   ├── bookshelf.js          书架 5 个接口
-      │   └── user.js               登录 / 注册
+      │   └── user.js               登录 / 注册 / 退出（退出会通知后端拉黑 token）
       ├── router/index.js           13 条路由 + 全局守卫（见第六章）
       └── views/
-          ├── NovelListView.vue     ★ 书城首页（Banner + 分类 + 搜索 + 分页 + 管理员删书）
-          ├── NovelDetailView.vue   详情 + 目录 + 管理员增删改章节（2 个 el-dialog）
+          ├── FeedView.vue          ★★ 首页 = 发现（内容流）2026-10-15 新增
+          ├── BookListView.vue      ★ 书单（策展墙）2026-10-15 新增
+          ├── AuthorView.vue        ★ 作者主页（身份标记「AI」只在这儿出现）2026-10-15 新增
+          ├── NovelListView.vue     ★ 书城（原首页，2026-10-15 改版；路由是 /store）
+          ├── NovelDetailView.vue   详情（评分 / 雷点 / 亮点 / 目录 / 书评 +
+          │                          管理员编辑作品·增删改章节，3 个 el-dialog）
           ├── ChapterReadView.vue   阅读器 + 上一章/下一章
           ├── MyShelf.vue           ★ 书架（排序 / 置顶 / 单个+批量移出 / 分页）
           ├── RankingView.vue       排行榜（总榜 / 日榜）
@@ -104,37 +134,62 @@
     字号用了 18 个档位，圆角用了 9 种，断点用了 5 个值。改一次主色要动 39 处。
     ★ 新增样式一律用变量；看到硬编码色值 = 该收敛了。
 
-  ## 主色（紫色系）
-    --brand        #7c3aed    按钮 / 链接 / 高亮
-    --brand-deep   #6d28d9    hover 加深
-    --brand-2      #4f46e5    渐变终点色
-    --brand-soft   #f3f0ff    选中行浅底
-    --brand-border #ddd6fe    浅边框
-    --brand-cover  渐变        默认封面占位
-    --brand-gradient  linear-gradient(135deg, var(--brand), var(--brand-2))  品牌名/主按钮
+  ## 主色（低饱和紫，2026-10-15 换过一套）
+    --brand        #6d4bd0    链接 / 激活态 / AI 评分（★ 不再拿来铺按钮）
+    --brand-deep   #5b3cb8    hover 加深
+    --brand-2      #6d4bd0    已废弃（这套设计不用渐变），保留是为了不破坏老代码
+    --brand-soft   #f2eefb    选中行浅底
+    --brand-border #ded4f3    浅边框
+    --brand-cover  #5b6b8c    默认封面占位
+    --brand-gradient  #6d4bd0 ★ 是个**颜色**不是渐变，名字没改是为了不动老代码
+    ★★ 关键变化：**主按钮改用近黑 --ink，不用紫色了**。
+       设计稿里"关注 / 创建书单 / 开始阅读 / 筛选标签选中"全是黑底白字，
+       紫色只留给品牌名、链接、激活态 —— 这是"克制"的来源
 
-  ## 中性灰阶（5 档，别再写新的灰）
-    --text-1 #1a1a2e  大标题/书名   --text-2 #444 正文      --text-3 #666 说明
-    --text-4 #999     辅助信息     --text-5 #bbb 极弱
-    --border #e8e8e8  --border-light #f0f0f0
-    --bg-page #f5f7fa --bg-soft #fafafa --bg-card #fff
+  ## 中性色（★ 两套名字指向同一批值，别慌）
+    --ink   #1a1a1a  --ink-2 #565656  --ink-3 #9a9a9a  --ink-4 #c2c2c2   ← 设计稿的叫法
+    --text-1 #1a1a1a --text-2 #565656 --text-3 #9a9a9a --text-4 #b0b0ae --text-5 #c2c2c2
+    --line #ececea   --line-2 #f4f3f1  --surface #fff
+    --border #ececea --border-light #f4f3f1
+    --bg-page #faf9f7 --bg-soft #faf9f7 --bg-card #fff
+    ★ 页面底从冷灰 #f5f7fa 换成**米白 #faf9f7** —— 整套设计的"暖"就来自这一处，
+      不是靠加黄色。别改回去。
+    ★ 新写页面用 --ink-* 或 --text-* 都行，但**同一个文件里别混用**，看着乱
+
+  ## 内容极性色（★ 这产品的招牌，比一般的语义色重要）
+    --rec #2f8f6f  --rec-bg #eaf4f0    推荐（低饱和青绿）
+    --warn #b0702a --warn-bg #f7efe4   避雷（低饱和琥珀）★ 不是刺眼的红
+
+  ## 封面配色（6 色，低饱和）
+    --cv-1 #5b6b8c  --cv-2 #7a6a7d  --cv-3 #6b7d6f
+    --cv-4 #8c7a6b  --cv-5 #6d6d7a  --cv-6 #5f7488
+    ★ tokens.css 里还有 .cv1~.cv6 六个**工具类**（唯一破例放进来的类）——
+      页面用 :class="coverColor(书.title)" 即可，同一本书永远同一个颜色
+    ★ 绝对不要用彩虹渐变（用户明确否掉过一版）
 
   ## 语义色
-    --success #10b981  --success-bg #d1fae5
-    --warning #f59e0b  --warning-text #d97706  --warning-bg #fef3c7
-    --danger  #ef4444
+    --success #2f8f6f  --success-bg #eaf4f0
+    --warning #b0702a  --warning-text #b0702a  --warning-bg #f7efe4
+    --danger  #c2452d   ★ 比旧版 #ef4444 暗一档，跟暖调不打架
 
-  ## 字号（7 档）
-    --fs-xs 12  --fs-sm 13  --fs-base 14  --fs-md 16  --fs-lg 20  --fs-xl 26  --fs-2xl 32
-    ★ 正文不用写（body 已设 14px / 行高 1.5）
+  ## 字号（8 档，2026-10-15 跟设计稿对齐后重排过）
+    --fs-xs 12  --fs-sm 13  --fs-base 14  --fs-md 15  --fs-lg 17
+    --fs-xl 19  --fs-2xl 22  --fs-3xl 27
+    ★ 正文不用写（body 已设 14px）
+    ★ 行高从 1.5 改成 **1.7**（App.vue）—— 中文比英文更需要行距，1.5 字会挤在一起
 
   ## 间距（--sp-1~7 = 4/8/12/16/24/32/48，全是 4 的倍数）
     ★ 别写 13px / 17px / 20px 这种不在档位里的值
 
-  ## 圆角（--radius-sm 6 / md 10 / lg 16 / full 999）
-  ## 阴影（--shadow-sm / md / lg / brand）
+  ## 圆角（--radius-sm 6 / ★md 8 / ★lg 12 / full 999）
+    ★ 设计稿：卡片 12px、按钮和输入框 8px。旧的 lg=16 基本不用了
+  ## 阴影
+    --shadow / --shadow-hover   设计稿那套（两层、很柔）
+    --shadow-sm/md/lg/brand     老的那套，留着没删
   ## 布局
-    --container 1200px   ★ 全站内容区最大宽度（原来有 1200/1300 两种，已统一）
+    --container 1200px   ★ 全站内容区最大宽度
+    ★ 但设计稿那 5 个页面自己的内容区是 **1120px**（写在各自的 scoped 里）——
+      设计稿是按 1120 排的版，硬掰成 1200 会挤。两套并存，别互相改
     --header-h  64px
     --z-header  100      --z-mask 2000
   ## 过渡
@@ -145,11 +200,18 @@
   四、★ 公共组件与插槽
 ################################################################################
 
-  ## SiteHeader（顶部导航，2026-10-14 新增）
-    三种用法：
-      <SiteHeader />                                   只要一条空导航栏
-      <SiteHeader> ...内容... </SiteHeader>            品牌名右边的区域（默认插槽）
-      <SiteHeader><template #right> ... </template></SiteHeader>   右侧区域
+  ## SiteHeader（顶部导航，2026-10-14 新增｜2026-10-15 主菜单搬进来了）
+    ★★ 主菜单（发现 / 书城 / 书单 / 排行榜）现在**做在组件里**，
+       5 个页面不用各写一遍。激活态用 useRoute() 比对路径 ——
+       ★ 首页要"完全相等"才算，否则任何路径都以 / 开头，"发现"会永远亮着
+    用法：
+      <SiteHeader />                                    只要导航栏
+      <SiteHeader show-search @search="onSearch" />     加搜索框（发 search 事件，带关键词）
+      <SiteHeader show-search @search="onSearch">
+        <template #right> ... </template>               右侧再塞东西（用户区 / 管理员按钮）
+      </SiteHeader>
+    ★ 默认插槽还留着（原来是给首页放分类切换的），现在**没人用**
+    ★ 品牌名写法照设计稿：<b>草</b>莓 —— 首字用主色、其余近黑，**不带 emoji**
 
     ★★ 插槽内容的样式写在**用它的页面**里，不要写进 SiteHeader.vue。
        这是 Vue 的规矩：插槽内容归父组件管。（已在 NovelListView 里验证过生效）
@@ -157,11 +219,17 @@
       自己在 @media 里 display:none 藏掉。
     ★ 左右留白必须与页面内容区一致：桌面 --sp-5(24px)、窄屏 --sp-4(16px)。
 
-    ## 迁移状态（★ 做到一半，别以为全站都接上了）
-      ✅ NovelListView     已接
-      ⬜ 其余 8 个页面      待接：NovelDetailView / ChapterReadView / MyShelf /
-                            RankingView / WriteNovel / LoginView / RegisterView / StaticPageLayout
-      → 待接页面目前各自写了一份 .header，宽度有 1200 和 1300 两种（RankingView 是 1300）
+    ## 迁移状态（2026-10-16 更新）
+      ✅ 已接 7 个：FeedView / BookListView / AuthorView / NovelListView /
+                    NovelDetailView / MyShelf / RankingView
+      ⬜ 待接 11 个：ChapterReadView / WriteNovel / LoginView / RegisterView /
+                     StaticPageLayout + static/ 下 5 个静态页
+      ★ 待接的这 11 个不是"忘了"，是**不能硬套**：
+        · 登录 / 注册 / StaticPageLayout + 5 个静态页 —— 它们是一套独立的
+          "品牌视觉在左、表单在右"排版，接导航栏要单独设计
+        · ChapterReadView —— 沉浸式阅读器，导航栏反而该**更简**，不是加菜单
+      ⬜ 品牌名不统一：登录 / 注册 / 静态页还是「📚 草莓」
+         （它们有自己的品牌图标排版），跟其它页面的「草莓」写法不一致
 
   ## SiteFooter
     用在：LoginView / RegisterView / StaticPageLayout
@@ -178,14 +246,19 @@
   3. 样式**就近放**（页面自己的 <style scoped>），不搞全局大 CSS
      唯一例外：设计变量（tokens.css）必须全局
   4. **不写行内 style**，除非是动态计算的值
-     ⚠ 现存 21 处行内 style，其中 NovelListView.vue:95 和 :152 的 padding:60px 0
-       会盖掉 CSS 的左右 24px，导致"加载中→有数据"切换时内容横向跳（已知问题，未修）
+     ⚠ 还剩一批行内 style，但**书架页和书城页那几处 2026-10-15 已经清掉了** ——
+       原来 NovelListView 的 padding:60px 0 会盖掉 CSS 的左右 24px，
+       导致"加载中→有数据"切换时内容横向跳；改版整页重写，问题跟着没了
+     ★ 新写页面别再往里加，看到旧的顺手清
   5. 三态齐全：**加载中 / 空数据 / 报错** 三个都要有
      ★ 这是最能区分"学生作业"和"能用的产品"的地方
   6. 响应式至少保证 375px（手机）和 1440px（桌面）不崩
-     ⚠ 目前零媒体查询的页面：NovelDetailView / ChapterReadView / WriteNovel / SiteFooter / App.vue
+     ⚠ 目前零媒体查询的页面：ChapterReadView / WriteNovel / SiteFooter / App.vue
        （static/ 下 5 个也没有，但它们继承 StaticPageLayout 的 640px 规则，不算问题）
-       其中前三个有 padding:16px 40px 固定值，窄屏会挤
+       ChapterReadView / WriteNovel 有 padding:16px 40px 固定值，窄屏会挤
+     ✅ NovelDetailView 2026-10-14 已补 @media(max-width:768px)（断点跟 SiteHeader 一致）：
+        详情卡片改纵向堆叠、导航栏改上下两段。
+        修前实测 375px 下 scrollWidth = 637px（有横向滚动条），修后 = 375px。
   7. 过渡 150~200ms（用 --t-fast / --t-base），不搞花哨动画
   8. 中文注释写清"这块在干嘛"；组件名大驼峰，文件名跟组件名一致
 
@@ -194,7 +267,10 @@
   六、路由表（13 条，router/index.js）
 ################################################################################
 
-  /                                    home         NovelListView
+  /                                    home         FeedView          ← 首页 = 发现（内容流）
+  /store                               store        NovelListView     ← 书城（原来是首页）
+  /booklists                           booklists    BookListView      ← 2026-10-15 新增
+  /author/:id                          author       AuthorView        ← 2026-10-15 新增
   /novels/:id                          novelDetail  NovelDetailView
   /novels/:novelId/chapters/:chapterId chapterRead  ChapterReadView
   /login                               login        LoginView
@@ -213,7 +289,7 @@
 
 
 ################################################################################
-  七、接口层（前端调了 18 个后端接口）
+  七、接口层（前端调了 20 个后端接口）
 ################################################################################
 
   ★ 请求细节（参数名/返回结构）去查《项目说明-参考附录.txt》附 A，这里只列清单。
@@ -221,11 +297,13 @@
 
   ## api/user.js
     POST /users/login              POST /users/register
+    POST /users/logout             ★ 2026-10-14 接上；传 token 进 headers（原因见第八章）
 
   ## api/novel.js
     GET    /novels?page&size&category&status&keyword     列表（服务端分页）
     GET    /novels/{id}                                  详情
     POST   /novels                                       新建（管理员）
+    PUT    /novels/{id}                                  修改（管理员）★ 2026-10-14 接上
     DELETE /novels/{id}                                  删除（管理员）
     POST   /upload                                       上传封面（multipart）
     POST   /novels/{novelId}/chapters                    加章节
@@ -235,12 +313,38 @@
     GET    /novels/categories                            全部分类
     GET    /novels/ranking?top&type                      top 默认 10；type = total | daily
 
+    ★★ 排行榜的返回字段名是**大写开头**的：NovelId / Title / CoverUrl / Heat
+       （后端 NovelRankVO 写成了 `private Integer NovelId`，首字母大写不符合 Java
+         规范，Jackson 就原样序列化成大写 key 了。）
+       → 所以直接读 item.title 会**永远读到 undefined**：书名空白、"热度"是 0、
+         点了没反应 —— 而且**不报错**。
+       → 必须过 utils/normalize.js 的 rankList() 转一道。
+         ★ 这个坑 2026-10-15 在书城的"人气榜"真踩了一次，16 号才发现（书城 +
+         排行榜两处都修了）。
+       ★ 榜单只有 4 个字段，**没有**作者 / 分类 / 字数 —— 榜单页别加那几列
+    ★ 榜单的"周榜 / 月榜 / 收藏榜"在后端没有数据源，前端做成**灰色占位**
+      （点了会说明原因），别做成"能点但没反应"
+
   ## api/bookshelf.js（5 个）
     POST   /bookshelf                  加入书架
     GET    /bookshelf?page&size&sort   列表；sort = RECENT_READ | RECENT_ADD | NOVEL_UPDATE
     PUT    /bookshelf/{id}/top         置顶/取消（body: { top }）
     DELETE /bookshelf/{id}             单个移出（软删）
     POST   /bookshelf/batch-remove     批量移出（body: { ids }）
+
+  ## ★★ 书架列表返回的字段（BookshelfItemVO，2026-10-15 核实）
+    id / top / topTime / lastReadChapterId / lastReadTime / createTime
+    novelId / title / author / coverUrl / category / status / totalWords / lastUpdateTime
+
+    ★ 三个坑（2026-10-15 之前前端全踩了，已修）：
+      · 置顶字段叫 **top（Boolean）**，不是 isTop（1/0）——
+        实体 Bookshelf 里叫 isTop，VO 里被转成了 Boolean top，两者不一样。
+        读错 = 永远 undefined：角标不显示、"置顶"取消不掉
+      · **没有** lastReadChapterNumber（章节号）/ totalChapters（总章数）/
+        latestChapterTitle（最新章节名）—— 前端曾经在读这三个，永远读到
+        undefined，而且不报错（静默失败）
+      · 所以"读到第 N 章 / 共 N 章 / 最新章节"这类文案**现在写不出来**：
+        要么不说，要么等后端补字段（缺口记在 docs/设计/前端改版-设计方案.txt）
 
   ## ★ 阅读进度
     前端**没有**独立的进度接口 —— 后端在 GET 章节时自己往 Redis 暂存，
@@ -269,15 +373,32 @@
       （定向删除，避免以后加了主题偏好等 key 被一起清掉）
     · requireLogin('收藏') → 未登录时弹 ElMessageBox 确认框，返回 boolean
 
+  ## ★ 退出登录的真实流程（2026-10-14 起，logout() 不再只是清本地）
+    顺序：① 先抠出 token → ② 清本地凭证 → ③ 再 POST /users/logout 通知后端拉黑
+    · ★ 为什么先抠 token：axios 的请求拦截器是**异步**跑的，
+      先 removeItem 的话，拦截器去读 localStorage 时已经是空的 → header 没身份 →
+      后端 401 → **拉黑等于没做，而且界面上看不出来**。
+      所以 api/user.js 的 logout(token) 是把 token 当参数收、自己塞 headers 的。
+    · ★ 为什么"先清本地再通知"而不是"通知成功再清"：退出必须是瞬时的，
+      不能因为网慢让用户卡住。服务端拉黑属于尽力而为。
+    · ★ 失败处理：不弹框（用户已经退出了，弹"退出失败"只会让人困惑），
+      但**必须留 console.warn** —— 而且 **.catch() 一层不够**：
+      本项目业务异常是 HTTP 200 + body.code=500，axios 不会 reject，
+      所以还要在 .then 里显式判 `res.data.code !== 200`。只写 catch = 静默失败。
+    · 调用方（LoginView / MyShelf / NovelListView）签名没变，一行都不用改。
+
   ## ⚠ refreshToken 现状
     登录时存了 refreshToken（LoginView.vue:209），但**全项目没有任何续期逻辑**，
     只在 401/退出时被删掉。属于"存了没用"，别以为 token 失效会自动续。
 
   ## 错误提示统一用
     ElMessage.error / warning / success（Element Plus），不用 alert()
-    ★ 目前有 2 处**静默失败**（控制台有 error、界面无提示）：
-      NovelListView.vue:200  分类加载失败
-      ChapterReadView.vue:64 章节列表失败
+    ★ 静默失败还剩 1 处（控制台有 error、界面无提示）：
+      ChapterReadView 章节列表加载失败
+      （书城页那处 2026-10-15 改版时补上了 console.warn + 提示）
+    ★★ 硬规矩：**接口挂了不能伪装成"空数据"**。
+      三态要真的分开 —— 书城 / 详情页 / 书架 2026-10-15 都补了独立报错态
+      （带重试按钮），新页面照它们写
 
 
 ################################################################################
@@ -304,22 +425,75 @@
 ################################################################################
 
   ## 刚做完
+    · ★ 书架页 / 排行榜页改成统一格式（2026-10-16）
+      · 两页都接上了 SiteHeader（迁移进度：已接 7 / 待接 11），都用了新的配色变量
+      · ★ 修掉一个**我自己在 10-15 埋的 bug**：书城页"人气榜"直接读了
+        `n.title`，而排行榜接口的字段名是大写开头的 → 那一栏一直是空白、
+        点了没反应。两处现在都过 utils/normalize.js 的 rankList()
+      · 排行榜的"周榜 / 月榜 / 收藏榜"做成**灰色占位**（点了会说明为什么没有），
+        不是"看着能点、点了没反应"
+      · tokens.css 里把 **Element Plus 的主题色接到我们的配色上**了 ——
+        之前自己写的按钮是黑/紫、el-button 和分页器还是默认蓝色，
+        同页两种主色。现在覆盖 --el-color-primary 那几个变量，不用引任何新依赖
+    · ★★ 前端改版 5 个页面全部落地（2026-10-15）
+      首页换成「发现」（内容流），书城挪到 /store，新增书单页、作者页，详情页改版。
+      · 配色整套换掉：主色 #7c3aed → #6d4bd0，页面底冷灰 → **米白 #faf9f7**，
+        ★ **主按钮改用近黑**（紫色只留给链接和激活态）；全站 14 个文件的硬编码
+        旧色值一起收敛了
+      · 新增 src/mock/data.js：内容流 / 雷点 / 书单 / 作者全是假数据，
+        5 个页面共用一份；假书 id 用 9xxx，详情页靠它识别"这是演示数据"
+      · ★ 书城和详情页**凡是有真接口的地方一律接真的**（列表/分类/搜索/分页/
+        排行榜/详情/章节/管理员 CRUD），一处假数据都没放
+      · ★ 前端**刻意没做**的东西（写了没反应比没有更糟）：
+        书城的排序（后端无 sort 参数）、分类树上每个分类的数量（接口不返回）、
+        详情页的「打分」按钮（后端无评分表）、书单详情页（后端无书单表）——
+        这些都在 docs/设计/前端改版-设计方案.txt 里登记了
+      · 3 处**新的报错态**：书城（原来 500 会伪装成"暂无小说"）、详情页
+        （原来接口一挂整页空白）、发现页/书单页/作者页的空态
+    · ★ 品牌名定为「草莓」（2026-10-15）
+      全项目 9 个文件里的「📚 夏辰义的书城」全部换掉（含静态页 / 页脚 / 标题）；
+      index.html 的 <title> 从脚手架的 "Vite App" 改成 "草莓 · 小说推荐与避雷"。
+      ★ 用真名当站名 + 品牌名带 emoji = 最典型的"像课程作业"，两个都去掉了
+    · ★ 书架页（MyShelf.vue）文案 + 三态重做（2026-10-15）
+      · 新增**报错态**：以前接口一挂就显示"书架还是空的"（错误被伪装成空数据，
+        用户看不出是坏了还是真没有）。现在"有数据 / 出错（可重试）/ 真空"
+        三种状态分开，源码里顺序就是 列表 → 报错 → 空
+      · 修掉 3 类字段 bug：isTop → top；不再读后端根本没有的
+        lastReadChapterNumber / totalChapters / latestChapterTitle
+        （详见第七章"书架列表返回的字段"）★ 修之前"置顶"是**取消不掉**的
+      · 文案走"温度感"：时间改相对时间（"昨晚"）、进度改"在读 · 昨晚读到这儿"、
+        更新改"昨天更新过 · 12.3 万字"、空态 🍓 + 一句人话
+      · 刻意**不说"读到第 N 章"**：后端没给章节号，编数字比不写更糟
+      · 顺带清掉该页 2 处行内 style
+    · ★ main.js 补上 Element Plus 中文 locale（2026-10-14）
+      改之前全站内置文案都是英文：退出确认框是 OK / Cancel、分页器和空状态也是英文
+    · ★ useAuth.logout() 现在会通知后端**真正拉黑 token**（POST /users/logout）（2026-10-14）
+      顺序 + 两个必踩的坑（异步拦截器 / HTTP 200 假成功）写在第八章
+      调用方（LoginView / MyShelf / NovelListView）零改动
+    · ★ NovelDetailView 接上 `PUT /novels/{id}` → 「编辑作品信息」弹窗（2026-10-14）
+      字段 = 书名 / 作者 / 分类 / 简介 / 封面
+      ★ 正好是后端 NovelDTO 支持的 5 个 —— **它没有 status**，所以改不了"连载/完结"
+      同轮顺带补了该页的 ≤768px 窄屏适配（详见第五章第 6 条）
     · tokens.css 设计变量 + SiteHeader 公共导航（**只接了首页**）
     · main.js / App.vue 接入变量，body 补了统一字号行高
 
   ## 下一步（按优先级）
     1. 把剩下 8 个页面接上 SiteHeader
     2. 修 2 处静默失败（分类 / 章节列表）
-    3. 补 NovelDetailView / ChapterReadView / WriteNovel 的窄屏适配
+    3. 补 ChapterReadView / WriteNovel 的窄屏适配（NovelDetailView 2026-10-14 已补）
     4. 清掉现存硬编码色值（改样式时顺带，不用专门开一轮）
     5. 书架页返回值改 BookshelfItemVO（后端任务，见 00-项目总览）
 
-  ## 已知问题（前端侧，未修）
-    · NovelListView.vue:200 / ChapterReadView.vue:64  静默失败
-    · NovelListView.vue:95 / :152  行内 padding 盖掉左右留白，切换时横向跳动
-    · 接口 500 时页面显示"暂无小说"—— 错误被伪装成空状态，用户看不出是挂了
-    · LoginView 的"手机号登录" tab 是纯占位，没有实现
-    · 全站零测试；前端也没有任何测试
+  ## 已知问题（前端侧，2026-10-15 更新）
+    · ✅ 已修：NovelListView 的静默失败、行内 padding 盖住左右留白
+      —— 该页 2026-10-15 整页改版，两个问题随重写一起消失
+    · ✅ 已修：接口 500 时伪装成空状态 —— 书城页 / 详情页 / 书架页都补了
+      **独立的报错态（带重试）**，不再落到"暂无数据"
+    · ⬜ 仍在：ChapterReadView 章节列表加载失败是静默的
+    · ⬜ 仍在：LoginView 的"手机号登录" tab 是纯占位，没有实现
+    · ⬜ 仍在：全站零测试；前端也没有任何测试
+    · ⬜ 新记：发现 / 书单 / 作者 / 详情 里的新内容全是**假数据**，
+      页面底部已标明是演示数据 —— 后端缺口见 docs/设计/前端改版-设计方案.txt
 
 
 ################################################################################

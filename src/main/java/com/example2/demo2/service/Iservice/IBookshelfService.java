@@ -23,7 +23,7 @@ public interface IBookshelfService {
     void top(Integer userId, Integer BookshelfId, Boolean isTop);
 
     // 4。软删除书架里的书
-    void remove(Integer userId,Integer BookshelfId );
+    void remove(Integer userId,Integer BookshelfId);
 
     // 5.删除多本
     void batchRemove(Integer userId, List<Integer> ids);

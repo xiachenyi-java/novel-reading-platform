@@ -1,6 +1,7 @@
 package com.example2.demo2.controller;
 
 import com.example2.demo2.common.Result;
+import io.swagger.v3.oas.annotations.Operation;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -31,6 +32,7 @@ public class FileController {
     @Value("${file.base-url:http://localhost:8080}")
     private String baseUrl;
 
+    @Operation(summary = "上传文件")
     @PostMapping
     public Result<String> upload(@RequestParam("file") MultipartFile file) {
         if (file.isEmpty()) {

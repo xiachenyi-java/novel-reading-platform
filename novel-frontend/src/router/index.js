@@ -1,10 +1,17 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import LoginView from '../views/LoginView.vue'
+// ★ 2026-10-15：首页从"书城"换成"发现（内容流）"，书城挪到 /store。
+//   为什么书城是改 NovelListView 而不是新建一个文件：它接的是**真接口**
+//   （列表 / 分类 / 搜索 / 分页），改版只是换了副样子，逻辑得原样保住。
+import FeedView from '../views/FeedView.vue'
 import NovelListView from '../views/NovelListView.vue'
 import NovelDetailView from '../views/NovelDetailView.vue'
 
 const routes = [
-  { path: '/', name: 'home', component: NovelListView },
+  { path: '/', name: 'home', component: FeedView },
+  { path: '/store', name: 'store', component: NovelListView },
+  { path: '/booklists', name: 'booklists', component: () => import('../views/BookListView.vue') },
+  { path: '/author/:id', name: 'author', component: () => import('../views/AuthorView.vue') },
   { path: '/novels/:id', name: 'novelDetail', component: NovelDetailView },
   { path: '/login', name: 'login', component: LoginView },
   { path: '/register', name: 'register', component: () => import('../views/RegisterView.vue') },

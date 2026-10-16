@@ -22,8 +22,10 @@
     步骤 4  readChapter 写 Redis 进度    ✅ 完成（含游客判空）
     步骤 5  定时任务刷回 DB              ✅ 完成（ProgressFlushTask）
   ⇒ 5 步都**写完了**，但"写完"≠"能用"：
-    dc8f67a 收尾时带出一个回归（🔴 问题 25），
-    使置顶 / 移出两个接口对**在架记录**直接 500。见下方"仍未解决的"。
+    dc8f67a 收尾时带出过一个回归（问题 25：置顶 / 移出对**在架记录**直接 500），
+    ★ 2026-10-14 提交 36405de 已改回（deleted 参数 1 → 0）。
+    ⚠⚠ 但**判据一次都没跑** ⇒ 状态是"待验证"，**不是"已解决"**。
+       见下方"代码已改、判据未跑"。
 
   ------------------------------------------------------------------
   ✅ 已修的
@@ -39,13 +41,19 @@
      ⚠ 判据④（docker compose down -v && up --build）**还没实测**
 
   ------------------------------------------------------------------
-  ⚠⚠ 仍未解决的（按紧急度）
+  🟠 代码已改、判据未跑（2026-10-14 提交 36405de）—— ★ 别当成已解决
   ------------------------------------------------------------------
-  🔴 top()/remove() 把 deleted 传成了 1 → 在架记录的置顶/移出**全部 500**（问题 25）
-     ★ 新回归，dc8f67a 修问题 23 时带出来的，只差一个字符；最优先
-  🟡 remove() 没删 Redis 的进度 key → 移出再重新加入，旧进度被写回来（问题 24）
-     ★ 代码已加删除，但被上面 25 挡住、执行不到，等于没修
-  🟡 top()/remove() 不过滤 deleted → 软删掉的记录还能被置顶（问题 23，未修好）
+  🟠 top()/remove() 的 deleted 参数：dc8f67a 传成 1 → 已改回 0（问题 25）
+     ★ 曾让在架记录的置顶/移出**全部 500**；现在"读代码"看是对的，**没跑过**
+  🟠 remove() / batchRemove() 删 Redis 进度 key（问题 24）
+     ★ 单条 + 批量两条路径都补上了（批量那条原本**完全没有**）
+     ★ 顺序有讲究：先查 novelId → 再 UPDATE → 最后删 key，反了就查不到
+  🟠 top()/remove() 过滤 deleted=0（问题 23）
+     ★ 语义随 25 一并变：已软删的记录查不到 ⇒ 被 orElseThrow 拦下
+  ------------------------------------------------------------------
+  ⚠ 确认仍开放的
+  ------------------------------------------------------------------
+  🟡 防击穿 locks Map 只增不减（NovelServiceIml）—— 无界内存
   🟡 书架 + 进度功能 0 测试
   ⚪ 加入接口仍返回实体 Bookshelf（列表接口已改 BookshelfItemVO）；章节统计未做
 
@@ -144,29 +152,32 @@
     · ★ BookshelfSortConverter 已写，@Component 已加（实测确认）
     · ⚠ 查询方法未加 @Transactional(readOnly = true)（编码约定里有这一条）
 
-  【接口 3：PUT /bookshelf/{id}/top】✅
+  【接口 3：PUT /bookshelf/{id}/top】代码就绪 ✅ · 未验 🟠
     · 归属校验用 findByIdAndUserIdAndDeleted ✅（不是 findById）
     · top=false 时 topTime 清成 null ✅（落实设计文档 3.3 的 v2 补充）
     · DTO 的 top 用 **Boolean**（设计文档 4.1 就是 Boolean）
-    · 🔴 deleted 参数传成了 **1**（应为 0）→ 在架记录直接 500 → 问题 25
-    · 🟡 传对之后仍要确认：软删记录不该能被置顶 → 问题 23
+    · ★ deleted 参数：dc8f67a 传成 **1**（在架记录 500，问题 25）→ 36405de 已改回 **0**
+    · 🟡 传对之后仍要确认：软删记录不该能被置顶 → 问题 23（判据待跑）
 
-  【接口 4：DELETE /bookshelf/{id}】✅
-    · 归属校验用 findByIdAndUserIdAndDeleted ✅（但 deleted 传错，见问题 25）
+  【接口 4：DELETE /bookshelf/{id}】代码就绪 ✅ · 未验 🟠
+    · 归属校验用 findByIdAndUserIdAndDeleted ✅（deleted 参数 dc8f67a 传错 → 36405de 改回 0）
     · 幂等：重复移出不报错 ✅
-    · ★ 新增：删 Redis 的 progress 进度 key（problems-24 的修法），带 try/catch
-      —— 在架记录走不到这一步（被问题 25 的 orElseThrow 挡住）
+    · ★ 删 Redis 的 progress 进度 key（问题 24 的修法），带 try/catch
+      —— dc8f67a 那版因 deleted=1 被 orElseThrow 挡住、走不到；改回 0 后才真正生效（待验）
     · ★ 比设计更周全：额外清了 isTop / topTime / lastReadChapterId / lastReadTime
       ⇒ 复活时是一张"干净"的记录，不会带回旧的置顶和阅读进度
 
-  【接口 5：POST /bookshelf/batch-remove】✅
+  【接口 5：POST /bookshelf/batch-remove】代码就绪 ✅ · 未验 🟠
     · 用 softDeleteByIds 一次 UPDATE（WHERE 里带 userId，天然免疫越权）✅
     · ids 上限 100（@NotEmpty + @Size(max=100)）✅
     · 部分成功只记 log.info，不报错（符合设计"其余静默忽略"的意图）
+    · ★ 2026-10-14 36405de 补：**批量删 Redis 进度 key**（问题 24 的批量缺口）
+      三步顺序不能反 —— 先 findByIdInAndUserIdAndDeleted 查 novelId（必须在 UPDATE 前）
+      → 再 softDeleteByIds → 最后 stringRedisTemplate.delete(keys)，带 try/catch 降级
 
   ✅ 路径单复数已修：@RequestMapping("/bookshelf") 单数，与设计文档一致
 
-  ⚠ 仍缺：返回值是**实体 Bookshelf**，不是 BookshelfItemVO（步骤 3 尾巴）
+  ⚠ 仍缺：**加入接口**返回值是**实体 Bookshelf**（列表接口已改 BookshelfItemVO，dc8f67a）
   ⚠ 仍缺：5 个接口 **0 个测试**
 
 
@@ -286,10 +297,11 @@
        · POST /bookshelf/batch-remove
        实现要点全部落实：归属校验查询、top_time 清 null、
        softDeleteByIds 一次 UPDATE、ids 上限 100
-       🔴 2026-10-14 复核：归属校验那支查询改成了
-          findByIdAndUserIdAndDeleted(id, userId, **1**)
-          —— 1 是"已删"，应为 0 ⇒ 接口 3、4 对在架记录直接 500（问题 25）
-       ⚠ 遗留：top/remove 仍能操作软删记录（问题 23）
+       ★ 2026-10-14 复核：归属校验那支查询曾把常量传成 **1**
+          （findByIdAndUserIdAndDeleted(id, userId, 1)；1 是"已删"、应为 0）
+          ⇒ 接口 3、4 对在架记录直接 500（问题 25 回归）
+       ✅ 36405de 已改回 **0**；🟠 但判据未跑
+       ⚠ 遗留：语义上 top/remove 已不再能操作软删记录，但**反向探针没跑**（问题 23）
 
   【D】★ 下一步就是跑验收（接口都齐了，但**一条都没验过**）
        设计文档"十三、验证清单"里的 S2/S3/S4 越权测试必做。
@@ -396,12 +408,18 @@
             ★ 注意不能写 COUNT(*)：statistics 表一个索引每列占一行，
               两列的 UK 会返回 2。我第一版判据就写错了（假阴性）。
   ✅ 判据 2：事务内插两条相同 (user_id, novel_id) → 第二条报错
-  □ 判据 3：★ 故障演练 —— down -v && up --build，
-            看 app 容器起不起得来（现在会被问题 20 挡住）
+  ✅ 判据 3：故障演练 —— down -v && up --build（2026-10-16 实测通过）
+            app 容器起来了，干净卷建出 4 张表（问题 20 判据④ 一并验完）
 
-  【★ docker 建表脚本 —— 先修这个再谈部署】
-  □ file docker/mysql/init/01-schema.sql → 不能出现 UTF-16（现在是 UTF-16LE）
-  □ 转码/重导后：grep -c "CREATE TABLE" → 期望 4（UTF-16 时返回 0）
+  【★ docker 建表脚本 —— ✅ 2026-10-16 全部验证通过】
+  ✅ file docker/mysql/init/01-schema.sql → ASCII text（非 UTF-16）
+  ✅ grep -c "CREATE TABLE" → **4**（bookshelf / chapter / novel / user）
+  ✅ ★ 判据④ 故障演练已跑：干净卷启动建出 4 张表，
+     app 容器（prod + ddl-auto=validate）起来，中文完好（斗破苍穹 4 字符/12 字节）
+  ⇒ ★ 教训留档：判据②曾**两次**迷惑人 ——
+     第一次"UTF-16 时 grep 出 0"，第二次"grep 出 4，但库里是 3 张表"。
+     第二次的根因是 2026-10-15 发现的问题 26：应用连的是 3306 原生库，
+     `down -v` 清的是没人用的 3307 容器。**"文件对了" ≠ "库里对了"。**
 
   【步骤 1 相关】
   □ PUT /novels/1 不传 author → body.code=200，库里 author = "佚名"
@@ -429,35 +447,45 @@
                       HGETALL progress:{userId}:{novelId}
                       → 期望 chapterId / chapterNumber / updateTime 三个字段齐全
                       TTL 期望 7 天（TTL progress:{userId}:{novelId}）
-  □ 刷回：fixedDelay 临时改 10000 → 读 3 章 → 等一个周期
-          SELECT last_read_chapter_id, last_read_time FROM bookshelf
-           WHERE user_id=? AND novel_id=?
-          → 期望等于 Redis 里的值
-  □ ★★ 幂等验证（这一步最容易自欺欺人）：
-        不读书，等两个周期 → 期望那条记录的 update_time **不再变化**
-        日志期望：第二轮"扫描 N 条，更新 0 条"
-        ★"数据对了"和"没有重复写"是两件事，要分开验
-  □ ★ 新发现的 bug（问题 24）：
+  ✅ 刷回：实测**不用改 fixedDelay**（保持 300000 = 5 分钟就够）
+          塞入 progress:216:1（chapterId=999）→ 等一个周期
+          → 日志「扫描 1 条，更新 1 条」
+          → DB 的 last_read_chapter_id=999、last_read_time 与夹具时间戳**精确吻合**
+  ✅ ★★ 幂等验证（这一步最容易自欺欺人）：
+        第二轮 → 日志「扫描 1 条，更新 0 条」，update_time **未变** ✅
+        ★"数据对了"和"没有重复写"是两件事 —— 两条都验了
+  ★ 附带确认：刷回任务 SCAN 的是 **Redis 的 progress:\* key，不是 DB 行**
+    （ProgressFlushTask.java:47-51）—— 所以"扫描 N 条"的 N 是 **key 的条数**
+  ✅ 新发现的 bug（问题 24）—— **2026-10-16 原判据实测通过**
         读到第 5 章 → 等一轮刷回 → 移出书架 → 重新加入 → 等一轮
-        → 期望 last_read_chapter_id = null（干净记录）
-        → 现在会变成原来的 chapterId（remove 清了 DB，但 Redis 的 key 还在）
+        → 实测 last_read_chapter_id = **null**（干净记录）✅
+        完整链路：游客读章节 200 → A 读第 5 章（Redis 有 chapterId=5）
+        → 刷回「扫描 1 条，更新 1 条」→ 移出（Redis key 被删）
+        → 重加 → 再刷「扫描 0 条，更新 0 条」→ DB 仍是 NULL ⇒ **旧进度未复活**
+        ★ 2026-10-15 曾先用 Redis 夹具验过机制（单条 + 批量 + 对照组），
+          10-16 补上 6 个真实章节后按原判据重跑通过。详见问题清单 24。
+        ★ 附带修正：刷回的 UPDATE 守卫**不是** `lastReadTime IS NULL` ——
+          是按**读取时间比大小**（本次刷回前 DB 是上一轮的 999，仍被更新成 5）。
 
-  【★ 软删记录的边界（问题 23，2026-10-10 新增）】
-  □ 移出一本 → 用它的 id 调 PUT /bookshelf/{id}/top
-    → 期望 body.code=500（或什么都不发生）；现在会 200 并把 is_top 设成 1
-  □ 紧接着重新加入这本书 → 期望它**不在**置顶位（列表第一条不是它）
+  【★ 软删记录的边界（问题 23，2026-10-10 新增）—— ✅ 2026-10-15 实测通过】
+  ✅ 移出一本 → 用它的 id 调 PUT /bookshelf/{id}/top
+    → 实测 body.code=500「小说不在书架」；未修时会 200 并把 is_top 设成 1
+  ✅ 紧接着重新加入这本书 → 实测**不在**置顶位（列表第一条是置顶那本）
   □ {"top": 2} 之类的非法值 → 期望 body.code=500
     （已改 Boolean，Jackson 会把 2 收成 true；此条验的是"不再存进 is_top=2"）
 
-  【★ 置顶 / 移出的往返（问题 25，2026-10-14 复核新增）—— 这两条从来没跑过】
-  □ 加入一本 → PUT /bookshelf/{id}/top (top=true)
-    → 期望 body.code=200，且列表第一条是它
-    → 现在是 code=500「小说不在书架」（deleted 传成了 1）
-  □ 加入一本 → DELETE /bookshelf/{id}
-    → 期望 body.code=200，且列表里不再有它 → 现在是 code=500「书不存在」
-  □ ★ 反向探针（验判据本身）：拿一个**已移出**的 id 再调一次 remove
-    → 现在是 200（错），修好后期望 500
+  【★ 置顶 / 移出的往返（问题 25，2026-10-14 复核新增）—— ✅ 2026-10-15 全部跑通】
+  ✅ 加入一本 → PUT /bookshelf/{id}/top (top=true)
+    → 实测 body.code=200，且列表 content[0] 就是它（`top:true`）
+    → dc8f67a 那版是 500「小说不在书架」（deleted 传成 1）；36405de 改回 0 ✅
+  ✅ 加入一本 → DELETE /bookshelf/{id}
+    → 实测 body.code=200，且列表里不再有它 → dc8f67a 那版是 500「书不存在」
+  ✅ ★ 反向探针（验判据本身）：拿一个**已移出**的 id 再调一次 remove
+    → 实测 **500「书不存在」**；dc8f67a 那版是 200（错）
+    ★ 探针确实抓到了失败态（真返 500），不是"永远绿"的假阳性判据
   ★ 一律看 **body 的 code 字段**，不看 HTTP 状态码（RuntimeException 也返 200）
+  ★★ 请求体字段是 **top**，不是 isTop —— controller 收的是 BookshelfTopDTO.top
+  ★★ 这组判据的价值 > 修复本身：它们是这条路径**第一次**被跑。
 
   【性能】
   □ 开 SQL 日志，书架列表 20 条 → SELECT 次数 ≤ 4
@@ -486,12 +514,13 @@
       ★ 顺带修正了我自己写错的判据（COUNT(*) vs COUNT(DISTINCT index_name)），
         详见 1.2 节的"坑的历史记录"
     · 问题 22（路径单复数）→ ✅ **已修**（/bookshelf 单数）
-    · 问题 23（软删记录能被置顶）→ ❌ 新发现，未修（见第五节判据）
-    · 问题 24（移出再重新加入，旧进度被写回来）→ ❌ 新发现，未修
+    · 问题 23（软删记录能被置顶）→ 🟠 代码已改（36405de），判据未跑
+    · 问题 24（移出再重新加入，旧进度被写回来）→ 🟠 代码已改（36405de），判据未跑
       核心矛盾：remove() 清了 DB 字段，但**没删 Redis 的 progress key**
       ⇒ 定时任务在复活后把旧进度写回，等于"清空"被另一个组件撤销。
-      ★ 二选一：要么 remove 里删 key，要么 remove 里别清字段 —— 现在两件事同时做了，
-        效果互相抵消，而且表现依赖时序（7 天内/外不一样）。
+      ★ 二选一：要么 remove 里删 key，要么 remove 里别清字段 —— 现在选了前者：
+        remove() 删单条 key（:171-172）+ batchRemove() 批量删 key（:186-213）
+        ★ 批量那条是本轮补的缺口，原本**完全没碰 progress:***
     · 步骤 4/5（阅读进度）→ ✅ **已完成**
       readChapter 判空 ✅ / SCAN ✅ / fixedDelay ✅ / last_read_time 幂等 ✅
       / @EnableScheduling ✅ / 幂等 SQL 还多加了 deleted=0 ✅
@@ -503,8 +532,9 @@
     · 接口 1（加入）目前返回实体 Bookshelf，不是 VO —— 接口 2 已改（dc8f67a）
     · 章节统计未做（BookshelfItemVO 里没有 chapterCount）
     · 查询方法缺 @Transactional(readOnly = true)
-    · top()/remove() 不过滤 deleted（问题 23，未修好）
-    · 🔴 top()/remove() 的 deleted 参数传成 1（问题 25，新回归）★ 最优先
+    · 🟠 top()/remove() 的 deleted 参数（问题 25）：代码已改回 0，**判据未跑** ★ 最优先
+    · 🟠 top()/remove() 过滤 deleted=0（问题 23）：随 25 一并改，**反向探针未跑**
+    · 🟠 没做"语义化方法名"（findByIdAndUserIdInShelf）⇒ 传错 0/1 这种事**仍然写得出**
     · 5 个接口 0 测试
     · 单机锁 locks Map 只增不减（NovelServiceIml）—— 与本轮无关，记录在案
     · dev 库是 update 模式"长出来的"，只存在硬盘 —— 长期方案 Flyway
@@ -540,11 +570,13 @@
     ✅ 已补：唯一约束 uk_bookshelf_user_novel（问题 21，2026-10-10 关闭）
     ✅ 已补：schema.sql 补 bookshelf 表（问题 20，2026-10-13 b6b44d6 关闭）
     ✅ 已定：路径单复数 → 单数 /bookshelf（问题 22，2026-10-10 关闭）
-    🔴 待修：top/remove 的 deleted 传成 1（问题 25）★ 最优先，挡着两个接口
-    ⚠ 待确认：修 25 时把 deleted 改成 0 —— 顺手验证问题 23 是否真的没了
+    ✅ 已改：top/remove 的 deleted 参数 1 → 0（问题 25，2026-10-14 提交 36405de）
+    ✅ 已补：batchRemove() 删 Redis 进度 key（问题 24 的批量缺口，36405de）
+    · 🔴 待跑：置顶 / 移出的往返判据（问题 25）★ 最优先 —— 这三条从来没跑过
+    · 待跑：问题 23 的反向探针（已移出 id 再 remove，期望 500）
+    · 待跑：问题 24 的单条 + 批量**两条**路径
     · 待跑：接口 1 的验收（body.code=200 + 库里 author="佚名"）
     · 待跑：接口 2 的越权验证（S2~S4）
-    · 待跑：置顶 / 移出的往返验证（☆ 新：这两个接口从没跑过）
     · 待跑：./mvnw test 连跑两遍
 
 
