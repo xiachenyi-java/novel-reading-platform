@@ -98,7 +98,8 @@
   │
   ├── entity/
   │   ├── Novel.java                   ★ 带 @Table(indexes=...) 声明索引
-  │   ├── Chapter.java                 ★ 带 @Table(indexes=...) 声明索引
+  │   ├── Chapter.java                 ★ 带 @Table(uniqueConstraints=...) 声明唯一约束
+  │   │                                  ⚠ 实体声明了、**库里还没有**（见问题 33）
   │   ├── Bookshelf.java               ★ 2 个 @Index + 1 个 @UniqueConstraint
   │   └── User.java                    id / username / passwordHash / role
   │
@@ -191,6 +192,9 @@
     create_time    DATETIME(6) NOT NULL        @PrePersist 自动填
     索引：PRIMARY(id)
           idx_chapter_novel_number (novel_id, chapter_number)
+    ⚠ 2026-10-21：实体 Chapter.java 已声明 uk_chapter_novel_no 唯一约束，
+      但**库里没有**（schema.sql:67 仍是普通 KEY，ddl-auto=update 不会补）
+      ⇒ 见问题清单 33，加约束前要先查重复章节号
 
   bookshelf（软删除 + 置顶排序）
     id                   INT PK AUTO_INCREMENT

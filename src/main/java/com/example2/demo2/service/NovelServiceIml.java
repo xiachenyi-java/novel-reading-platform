@@ -19,6 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -28,6 +29,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -54,6 +56,7 @@ public class NovelServiceIml implements INovelService {
     private final CacheManager cacheManager;
     private final ConcurrentHashMap<Integer,Object> locks = new ConcurrentHashMap<>();
     private final IBookshelfService bookshelfService;
+    private final TransactionTemplate transactionTemplate;
 
     // ========== 1. 创建小说 ==========
     @Override
@@ -74,38 +77,54 @@ public class NovelServiceIml implements INovelService {
     }
 
     // ========== 2. 发布章节（核心） ==========
-    @Transactional(rollbackFor = Exception.class)
     @CacheEvict(value = "novel", key = "#novelId")
     @Override
     public Chapter addChapter(Integer novelId, ChapterDTO dto) {
-        // 2.1 查小说存在
-        Novel novel = novelRepository.findById(novelId)
-                .orElseThrow(() -> new BusinessException("小说不存在"));
 
-        // 2.2 算这是第几章
-        List<Chapter> list = chapterRepository.findByNovelIdOrderByChapterNumberAsc(novelId);
-        int nextNumber = list.size() + 1;
+        //每一本书加一把锁，不同小说不阻塞
+        Object lock = locks.computeIfAbsent(novelId, k -> new Object());
 
-        // 2.3 算字数（正文长度）
-        int wordCount = dto.getContent().length();
-
-        // 2.4 保存章节
-        Chapter chapter = new Chapter();
-        chapter.setNovelId(novelId);
-        chapter.setChapterNumber(nextNumber);
-        chapter.setTitle(dto.getTitle());
-        chapter.setContent(dto.getContent());
-        chapter.setWordCount(wordCount);
-        chapterRepository.save(chapter);
-
-        // 2.5 更新小说的总字数和最后更新时间
-        novel.setTotalWords((novel.getTotalWords() == null ? 0 : novel.getTotalWords()) + wordCount);
-        novel.setLastUpdateTime(LocalDateTime.now());
-        novelRepository.save(novel);
-
-        log.info("发布章节: novelId={}, chapterNo={}, title={}", novelId, nextNumber, dto.getTitle());
-        return chapter;
+        synchronized (lock) {                          // ② 锁在外层
+            try {
+                // ③ 事务在内层，execute() 返回时事务已提交，锁才释放
+                return transactionTemplate.execute(status -> doAddChapter(novelId, dto));
+            } catch (DataIntegrityViolationException e) {
+                // ④ 唯一约束兜底：万一锁失效（多实例部署），数据库会拦住
+                log.warn("章节号冲突，可能有并发或数据异常。novelId={}", novelId, e);
+                throw new BusinessException("章节号冲突，请重试");
+            }
+        }
     }
+
+        private Chapter doAddChapter(Integer novelId, ChapterDTO dto) {
+            // 2.1 查小说存在
+            Novel novel = novelRepository.findById(novelId)
+                    .orElseThrow(() -> new BusinessException("小说不存在"));
+
+            // 2.2 算这是第几章
+            Integer max = chapterRepository.findMaxChapterNumber(novelId);
+            int nextNumber = (max == null ? 0 : max) + 1;
+
+            // 2.3 算字数（正文长度）
+            int wordCount = dto.getContent().length();
+
+            // 2.4 保存章节
+            Chapter chapter = new Chapter();
+            chapter.setNovelId(novelId);
+            chapter.setChapterNumber(nextNumber);
+            chapter.setTitle(dto.getTitle());
+            chapter.setContent(dto.getContent());
+            chapter.setWordCount(wordCount);
+            chapterRepository.save(chapter);
+
+            // 2.5 更新小说的总字数和最后更新时间
+            novel.setTotalWords((novel.getTotalWords() == null ? 0 : novel.getTotalWords()) + wordCount);
+            novel.setLastUpdateTime(LocalDateTime.now());
+            novelRepository.save(novel);
+
+            log.info("发布章节: novelId={}, chapterNo={}, title={}", novelId, nextNumber, dto.getTitle());
+            return chapter;
+        }
 
     // ========== 3. 修改章节 ==========
     @Transactional(rollbackFor = Exception.class)
@@ -157,12 +176,11 @@ public class NovelServiceIml implements INovelService {
 
         chapterRepository.delete(chapter);
 
-        // 重排章节号
-        List<Chapter> chapters = chapterRepository.findByNovelIdOrderByChapterNumberAsc(novelId);
-        for (int i = 0; i < chapters.size(); i++) {
-            chapters.get(i).setChapterNumber(i + 1);
-        }
-        chapterRepository.saveAll(chapters);
+        // 重排章节号：两阶段，避免撞唯一约束
+        chapterRepository.shiftChapterNumbersUp(novelId, chapter.getChapterNumber());
+        chapterRepository.shiftChapterNumbersDown(novelId, chapter.getChapterNumber());
+
+
     }
 
     // ========== 5. 删除小说 ==========
@@ -374,6 +392,15 @@ public class NovelServiceIml implements INovelService {
 
     // ========== 13. 排行榜通用逻辑 ==========
     private List<NovelRankVO> findRankingByKey(String key, int top) {
+
+        // 防御：调用方无论怎么传，都不允许把整个 ZSet 拉出来
+        if (top < 1) {
+            top = 1;
+        }
+        if (top > 100) {
+            top = 100;
+        }
+
         Set<ZSetOperations.TypedTuple<String>> tuples;
         try {
             tuples = stringRedisTemplate.opsForZSet()

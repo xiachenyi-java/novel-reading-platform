@@ -135,10 +135,9 @@ public class NovelController {
     @GetMapping("/ranking")
     public Result<List<NovelRankVO>> ranking(@RequestParam(defaultValue = "10") int top,
                                              @RequestParam(defaultValue = "total") String type) {
-        // top 上限兜底
-        if (top > 100) {
-            top = 100;
-        }
+        // 上限 + 下限一起兜底：top ∈ [1, 100]
+        top = Math.max(1, Math.min(top, 100));
+
 
         if ("daily".equalsIgnoreCase(type)) {
             return Result.success(iNovelService.findDailyRanking(top));

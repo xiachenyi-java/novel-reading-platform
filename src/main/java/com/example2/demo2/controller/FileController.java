@@ -10,10 +10,16 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -44,6 +50,9 @@ public class FileController {
             return Result.error("只能上传图片文件");
         }
 
+
+
+
         try {
             File dir = new File(uploadPath);
             if (!dir.exists()) {
@@ -51,9 +60,19 @@ public class FileController {
             }
 
             String originalName = file.getOriginalFilename();
-            String ext = originalName != null && originalName.contains(".")
-                    ? originalName.substring(originalName.lastIndexOf("."))
-                    : ".jpg";
+            if (originalName == null) {
+                return Result.error("文件名不能为空");
+            }
+            int dot = originalName.lastIndexOf('.');
+            if (dot < 0) {
+                return Result.error("文件缺少扩展名");
+            }
+            String ext = originalName.substring(dot).toLowerCase(Locale.ROOT);
+
+            if (!Set.of(".jpg",".jpeg",".png",".gif").contains(ext)) {
+                return Result.error("只支持 jpg/jpeg/png/gif");
+            }
+
             String newName = UUID.randomUUID() + ext;
 
             //目标路径
@@ -69,7 +88,42 @@ public class FileController {
                 return Result.error("上传失败：非法的文件存储路径");
             }
 
-            Files.copy(file.getInputStream(), fullPath);
+            //magic bytes 真解码
+            byte[] bytes = file.getBytes();
+
+// 1. 只读文件头拿尺寸，不解码像素
+            int width, height;
+            try (var iis = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
+                var readers = ImageIO.getImageReaders(iis);
+                if (!readers.hasNext()) {
+                    return Result.error("文件内容不是有效图片");
+                }
+                var reader = readers.next();
+                try {
+                    reader.setInput(iis, true, true);
+                    width = reader.getWidth(0);
+                    height = reader.getHeight(0);
+                } finally {
+                    reader.dispose();
+                }
+            }
+
+// 2. 超限直接拒：2500 万像素 × 4 字节 ≈ 100MB 解码内存
+            if ((long) width * height > 25_000_000L) {
+                return Result.error("图片尺寸过大（最大 5000×5000）");
+            }
+
+// 3. 解码 + 重新编码
+            BufferedImage img = ImageIO.read(new ByteArrayInputStream(bytes));
+            if (img == null) {
+                return Result.error("文件内容不是有效图片");
+            }
+            String format = ext.equals(".jpeg") ? "jpg" : ext.substring(1);
+            if (!ImageIO.write(img, format, fullPath.toFile())) {
+                return Result.error("图片保存失败");
+            }
+
+// ⛔ 不要在这里再 Files.copy(bytes, fullPath)
 
 
             String url = baseUrl + "/uploads/" + newName;

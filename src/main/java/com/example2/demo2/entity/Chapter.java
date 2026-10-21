@@ -12,9 +12,12 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Table(name = "chapter",
-        indexes = {
-                @Index(name = "idx_chapter_novel_number", columnList = "novelId,chapterNumber")
-        }
+       uniqueConstraints = {
+        @UniqueConstraint(
+                name = "uk_chapter_novel_no",
+                columnNames = {"novelId", "chapterNumber"}
+        )
+}
 )
 @Data
 public class Chapter {
