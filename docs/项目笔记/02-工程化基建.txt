@@ -24,7 +24,8 @@
   08     分页查询                ✓      findPage 用 PageRequest
   09     事务控制                ✓      @Transactional(rollbackFor=...)
   10     日志规范                ✓      @Slf4j + logback 配置文件
-  11     单元测试                ✓      3 个测试类 12 例全部通过
+  11     单元测试                ✓      5 个测试类 18 例（集成 12 + Mockito 6）
+                                        ✅ 18/18 全绿（2026-10-19 实跑）
   12     API 文档                ✓      Knife4j @Tag/@Operation
   13     多环境配置              ✓      application-dev/prod.properties
   14     Docker 打包             ✓      Dockerfile + docker-compose.yml

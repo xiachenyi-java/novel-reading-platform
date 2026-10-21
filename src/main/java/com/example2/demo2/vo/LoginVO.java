@@ -1,6 +1,5 @@
 package com.example2.demo2.vo;
 
-import com.example2.demo2.entity.User;
 import lombok.Data;
 
 /**
@@ -13,5 +12,5 @@ public class LoginVO {
 
     private String refreshToken;//双令牌
 
-    private User userInfo;//用户信息
+    private UserVO userInfo;//用户信息
 }

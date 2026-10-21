@@ -2,8 +2,8 @@ package com.example2.demo2.service.Iservice;
 
 import com.example2.demo2.dto.LoginDTO;
 import com.example2.demo2.dto.UserRegisterDTO;
-import com.example2.demo2.entity.User;
 import com.example2.demo2.vo.LoginVO;
+import com.example2.demo2.vo.UserVO;
 
 public interface IUserService {
 
@@ -11,10 +11,10 @@ public interface IUserService {
     LoginVO login(LoginDTO dto);
 
     // 2.用户注册
-    User register(UserRegisterDTO dto);
+    UserVO register(UserRegisterDTO dto);
 
     // 3.获取当前用户
-    User getCurrentUser();
+    UserVO getCurrentUser();
 
     // 4.刷新令牌
     LoginVO refresh(String refreshToken);

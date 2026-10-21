@@ -9,6 +9,7 @@ import com.example2.demo2.dto.UserRegisterDTO;
 import com.example2.demo2.entity.User;
 import com.example2.demo2.service.Iservice.IUserService;
 import com.example2.demo2.vo.LoginVO;
+import com.example2.demo2.vo.UserVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -37,7 +38,7 @@ public class UserController {
     @Operation(summary = "用户注册")
     @RateLimit(key = "register", limit = 5, window = 60)
     @PostMapping("/register")
-    public Result<User> register(@RequestBody @Valid UserRegisterDTO dto) {
+    public Result<UserVO> register(@RequestBody @Valid UserRegisterDTO dto) {
         return Result.success(iUserService.register(dto));
     }
 

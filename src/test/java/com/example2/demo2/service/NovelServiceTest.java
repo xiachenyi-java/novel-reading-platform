@@ -4,10 +4,10 @@ import com.example2.demo2.common.exception.BusinessException;
 import com.example2.demo2.dto.NovelDTO;
 import com.example2.demo2.entity.Novel;
 import com.example2.demo2.service.Iservice.INovelService;
-import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.transaction.annotation.Transactional;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -20,13 +20,13 @@ import static org.junit.jupiter.api.Assertions.*;
 //启动整个 Spring Boot 应用，加载所有 Bean
 @Transactional
 //每个测试方法跑完后，数据库操作全部回滚"
-public class NovelServiceTest  {
+public class NovelServiceTest {
 
     @Autowired
     private INovelService INovelService;
 
     @Test
-    void  testAdd(){
+    void testAdd() {
         //准备
         NovelDTO dto = new NovelDTO();
         dto.setTitle("单元测试小说");
@@ -40,14 +40,15 @@ public class NovelServiceTest  {
     }
 
     @Test
-    void testFindByIdNotFound(){
-        Exception exception = assertThrows(RuntimeException.class,() -> {
-            INovelService.findDetail(99999);});
+    void testFindByIdNotFound() {
+        Exception exception = assertThrows(RuntimeException.class, () -> {
+            INovelService.findDetail(99999);
+        });
         assertTrue(exception.getMessage().contains("小说不存在"));
     }
 
     @Test
-    void testDelete(){
+    void testDelete() {
         // 准备：先加一个
         NovelDTO dto = new NovelDTO();
         dto.setTitle("待删除的小说");

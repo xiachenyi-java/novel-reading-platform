@@ -9,8 +9,13 @@ services:
       - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-      # 首次启动（数据目录为空时）自动执行建表脚本，只需一次
       - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 60s
 
   redis:
     image: redis:7-alpine
@@ -38,13 +43,9 @@ services:
       - DB_PASSWORD=123456
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PORT=6379
-      # 如果 Redis 有密码，再打开下面这行
-      # - SPRING_DATA_REDIS_PASSWORD=yourpassword
-      # 如果使用非 0 号库，再打开下面这行
-      # - SPRING_DATA_REDIS_DATABASE=0
     depends_on:
       mysql:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
 

@@ -10,6 +10,7 @@ import com.example2.demo2.entity.User;
 import com.example2.demo2.repository.UserRepository;
 import com.example2.demo2.service.Iservice.IUserService;
 import com.example2.demo2.vo.LoginVO;
+import com.example2.demo2.vo.UserVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -69,20 +70,17 @@ public class UserServiceIml implements IUserService {
                 7, TimeUnit.DAYS
         );
 
-        // 清除敏感信息后再返回
-        user.setPasswordHash(null);
-
         LoginVO loginVO = new LoginVO();
         loginVO.setToken(Accesstoken);
         loginVO.setRefreshToken(refreshToken);
-        loginVO.setUserInfo(user);
+        loginVO.setUserInfo(UserVO.from(user));
 
         return loginVO;
     }
 
     // ========== 2. 注册 ==========
     @Override
-    public User register(UserRegisterDTO dto) {
+    public UserVO register(UserRegisterDTO dto) {
         if (userRepository.findByUsername(dto.getUsername()).isPresent()) {
             throw new BusinessException("用户名已存在");
         }
@@ -97,12 +95,14 @@ public class UserServiceIml implements IUserService {
         String hashed = bCryptPasswordEncoder.encode(dto.getPassword());
         user.setPasswordHash(hashed);
 
-        return userRepository.save(user);
+        userRepository.save(user);
+
+        return UserVO.from(user);
     }
 
     // ========== 3. 获取当前用户 ==========
     @Override
-    public User getCurrentUser() {
+    public UserVO getCurrentUser() {
         // 1. 获取 ThreadLocal 中的用户
         UserContextDTO user = UserContext.getUser();
         if (user.getUserId() == null) {
@@ -116,7 +116,7 @@ public class UserServiceIml implements IUserService {
         if (userJson != null) {
             // 缓存命中：JSON 反序列化后直接返回
             try {
-                return objectMapper.readValue(userJson, User.class);
+                return objectMapper.readValue(userJson, UserVO.class);
             } catch (JacksonException e) {
                 log.error("Redis 缓存用户数据解析失败, userId={}, json={}", userId, userJson, e);
                 stringRedisTemplate.delete(key);
@@ -129,7 +129,7 @@ public class UserServiceIml implements IUserService {
 
         // 4. 写入 Redis（设置过期时间，防止永久驻留）
         try {
-            String json = objectMapper.writeValueAsString(dbUser);
+            String json = objectMapper.writeValueAsString(UserVO.from(dbUser));
             stringRedisTemplate.opsForValue().set(
                     key,
                     json,
@@ -139,7 +139,7 @@ public class UserServiceIml implements IUserService {
         } catch (JacksonException e) {
             log.error("用户数据序列化失败，写入Redis缓存异常, userId={}", userId, e);
         }
-        return dbUser;
+        return UserVO.from(dbUser);
     }
 
     // ========== 4. 刷新令牌 ==========
@@ -184,8 +184,7 @@ public class UserServiceIml implements IUserService {
         LoginVO vo = new LoginVO();
         vo.setToken(newAccessToken);
         vo.setRefreshToken(newRefreshToken);
-        user.setPasswordHash(null);
-        vo.setUserInfo(user);
+        vo.setUserInfo(UserVO.from(user));
 
         return vo;
     }

@@ -98,16 +98,18 @@
     写完 key = "#xxx"，回头看方法签名里有没有这个参数名。
     名字对不上，就一定是 bug。
 
-【★ 缺口 2：passwordHash 被写进 Redis 缓存】
+【★ 缺口 2：passwordHash 被写进 Redis 缓存】→ ✅ 已修（2026-10-19）
 
-  位置：UserService.getCurrentUser()
-    User dbUser = userRepository.findById(...).orElseThrow(...);
-    String json = objectMapper.writeValueAsString(dbUser);   // ← 带 passwordHash
-    stringRedisTemplate.opsForValue().set(key, json, 30, TimeUnit.MINUTES);
+  原位置：UserServiceIml.getCurrentUser()
+    String json = objectMapper.writeValueAsString(dbUser);   // ← 曾带 passwordHash
 
-  后果：
-    · Redis 里存着 BCrypt 哈希（不可逆，但不必要）
-    · 缓存命中时返回的 User 对象也带 passwordHash
+  现实现：
+    String json = objectMapper.writeValueAsString(UserVO.from(dbUser));
+    // 缓存命中：objectMapper.readValue(userJson, UserVO.class)
+    // UserVO 白名单只有 id / username / role
+
+  ★ 与问题 27 同一处修复（返回与缓存统一改 VO）。
+    ⚠ 判据（Redis 里 grep 不到 passwordHash）**未实测**。
 
 【★ 缺口 3：用户信息变更后缓存不失效】
 
@@ -208,13 +210,13 @@
 P0 · 必须做
 --------------------------------------------------------------------------------
 
-  □ 修 user:info 缓存里的 passwordHash
-    位置：UserService.getCurrentUser()
-    修法（三选一）：
-      方案一：缓存前 dbUser.setPasswordHash(null);
-      方案二：定义专门的 UserCacheVO（不含 passwordHash）
-      方案三：在 User.passwordHash 上加 @JsonIgnore
-              ★ 会影响所有序列化场景，改前先确认没有别处需要它
+  ✅ 修 user:info 缓存里的 passwordHash —— 已完成（2026-10-19）
+    位置：UserServiceIml.getCurrentUser()
+    实际采用：方案二的变体 —— 直接复用 vo/UserVO（白名单字段）
+    现实现：writeValueAsString(UserVO.from(dbUser))
+    ⚠ 判据未实测：getCurrentUser() **全项目无调用点**（缺口 4 的死代码），
+      无法通过 HTTP 验证缓存内容。补法见问题清单 30：写单测直接调 service，
+      或先接一个 GET /users/me。
 
 --------------------------------------------------------------------------------
 P1 · 应该做

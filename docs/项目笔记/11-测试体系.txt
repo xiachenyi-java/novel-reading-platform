@@ -9,9 +9,12 @@
   一、现状盘点
 ################################################################################
 
-【完成度】4/8  ■■■■□□□□
-【状态】✅ 测试能稳定跑通了 —— ./mvnw test 连跑两遍，12/12 全绿
-        还缺：纯单元测试（Mockito）、参数校验测试
+【完成度】6/8  ■■■■■■□□
+【状态】✅ 全量 **18/18 全绿**（2026-10-19 实跑，BUILD SUCCESS）
+        · 初跑时集成测试 12 例因 Docker 未启动全部报错；
+          修完问题 29、起 Docker 后复跑已全部通过
+        · Mockito 纯单测 6/6 + 集成测试 12/12
+        还缺：业务接口测试、参数校验测试（8 项里的最后 2 项）
 
 【现有测试文件】
 
@@ -21,6 +24,8 @@
   Demo2ApplicationTests.java              1     △ 只有 contextLoads 空壳
   service/NovelServiceTest.java           3     ✓ testAdd / testFindByIdNotFound / testDelete
   controller/UserControllerTest.java      8     ✓ 注册 / 登录 / 鉴权 / 黑名单
+  service/NovelServiceMockTest.java       3     ✓ Mockito 纯单测，3/3 通过（2026-10-19）
+  service/UserServiceMockTest.java        3     ✓ Mockito 纯单测，3/3 通过（2026-10-19）
   ------------------------------------------------------------------
 
 【8 项完成情况】
@@ -30,21 +35,27 @@
   ✅ 修 UserControllerTest 的接口路径（/books → /novels）
   ✅ 用 MockMvc 写鉴权测试（401 / 403 / 200 / 黑名单，四类全覆盖）
   △ 业务接口测试（Service 层有了，接口层还不够）
-  □ 给 NovelServiceIml 写纯单元测试（Mockito，不启动 Spring）★ 下一步重点
-  □ 给 UserService 写纯单元测试
+  ✅ 给 NovelServiceIml 写纯单元测试（Mockito，不启动 Spring，3 例）
+  ✅ 给 UserService 写纯单元测试（Mockito，3 例，3/3 通过；旧副作用断言已注释）
   □ 参数校验测试
 
-【★ 当前测试的性质 —— 都是集成测试，不是单元测试】
+【★ 当前测试的性质 —— 集成测试 + 纯单测并存（2026-10-19 起）】
 
-  现有 12 个测试（UserControllerTest 8 + NovelServiceTest 3 +
-  Demo2ApplicationTests 1）全部使用 @SpringBootTest，会启动整个 Spring 容器，
-  并且真实依赖 MySQL 和 Redis。
+  ① 集成测试 12 个（UserControllerTest 8 + NovelServiceTest 3 +
+     Demo2ApplicationTests 1）全部使用 @SpringBootTest，会启动整个 Spring 容器，
+     并真实依赖 MySQL 和 Redis。环境起不来，测试就全红
+     （2026-10-19 最近一次运行即因 Docker 未启动而 12 例全报错）。
 
-  这意味着：环境起不来，测试就全红。
-  2026-10-03 就因为这个排查了半天（详见第五节 · 坑 3）。
-
-  ⇒ 所以"纯单元测试（Mockito）"这一项还没做，它是下一步的重点：
-     纯单测不启动容器、不连数据库，毫秒级、不挑环境。
+  ② 纯单测 6 个（NovelServiceMockTest 3 + UserServiceMockTest 3）用
+     @ExtendWith(MockitoExtension.class)：@Mock 假仓库、@InjectMocks 真 Service，
+     不启动容器、不连数据库，毫秒级、不挑环境。
+     ★ 2026-10-19 新增，**6/6 全部通过**。
+     ★ 链式 Mock 技巧：login 里有 stringRedisTemplate.opsForValue().set(...)，
+       只 Mock StringRedisTemplate 不够（第 1 步返回 null，第 2 步 NPE）；
+       要同时 @Mock ValueOperations，并
+         when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations)
+     ★ 实测判据（2026-10-19）：停掉 MySQL + Redis 后，两个 MockTest 仍全绿，
+       集成测试报 Connection refused —— 这就是单元测试与集成测试的分界线。
 
 【测试结构模板（现有的，可复用）】
   @SpringBootTest
@@ -101,10 +112,13 @@
 第 2 步 · 补最有价值的单元测试
 --------------------------------------------------------------------------------
 
-  □ 给 NovelServiceIml 写纯单元测试（Mockito，不启动 Spring）
-    位置：新建 src/test/java/com/example2/demo2/service/NovelServiceUnitTest.java
+  ✅ 给 NovelServiceIml 写纯单元测试（Mockito，不启动 Spring）—— 已完成（2026-10-19）
+    位置：src/test/java/com/example2/demo2/service/NovelServiceMockTest.java
+    （实际文件名是 …MockTest，不是原计划的 …UnitTest）
+    已覆盖：updateNovel 正常改字段 / author 空白 → 佚名 / 小说不存在 → 抛异常且不 save
+    ★ 原计划优先测的 addChapter / updateChapter / deleteChapter（字数同步）**尚未覆盖**
 
-    ★ 优先测这三个方法（最容易出 bug 的地方）：
+    □ 下一步补这三个方法（最容易出 bug 的地方，仍待做）：
 
     ① addChapter —— 字数累加
        断言：发布章节后，novel.totalWords 应该增加 chapter.content.length()
@@ -122,7 +136,12 @@
     ★ 这几个方法的逻辑是"算数 + 状态变更"，
       最容易被忽略、最容易出错，也最适合单元测试。
 
-  □ 给 UserService 写纯单元测试
+  ✅ 给 UserService 写纯单元测试 —— 已写 3 例（2026-10-19）
+    位置：src/test/java/com/example2/demo2/service/UserServiceMockTest.java
+    已覆盖：login 的三个分支（用户不存在 / 密码错误 / 成功），3/3 通过
+    ★ 旧副作用断言（实体被清空）已注释 —— 它断言的是实现细节，不是契约
+    □ 仍缺：① register ② refresh
+
     ① register
        · 用户名已存在 → 抛 BusinessException("用户名已存在")
        · 正常注册 → 密码被 BCrypt 加密（不是明文）
@@ -137,7 +156,7 @@
 第 3 步 · 接口层测试（★ 最有价值）
 --------------------------------------------------------------------------------
 
-  □ 用 MockMvc 写鉴权测试
+  ✅ 用 MockMvc 写鉴权测试 —— 已完成（UserControllerTest 8 例）
     这四类测试写完，你的鉴权逻辑就有了保障：
 
     ① 无 token 访问受保护接口 → 401

@@ -16,32 +16,35 @@
   ★ 改代码前看本文件；了解项目看项目说明。
 
 【★★ 活跃问题速查（先看这里）】
-  ⚠ 本区 + 下方「安全隐患 4/5/6/27」「数据/性能 7/8/9」+ 下半部分
+  ⚠ 本区 + 下方「安全隐患 4/6」「数据/性能 7/8/9」+ 下半部分
     「代码质量 12/15/16」，**合起来才是「需要动手」的全集**。
     （原表头写"只有这些"，与下面几个分区自相矛盾，2026-10-16 更正）
   ------------------------------------------------------------------
   编号  问题                                    紧急度  一句话
   ------------------------------------------------------------------
-  27    注册接口返回体带 passwordHash           🟠 敏感   同"返回实体不返回 VO"
-  28    MySQL 容器没有 healthcheck              🟡 隐患   app 可能先于 MySQL 就绪
   --    防击穿 locks Map 只增不减                🟡 隐患   无界增长（无界内存）
+  30    验证债：getCurrentUser 无调用点             🟡 验证   问题 5 无法端到端验
+  31    Novel.setChapters() 空方法                🟢 清洁   建议删除
+  ✅ 27 注册/登录返回体带 passwordHash —— 2026-10-19 已修（register/login/refresh 全实测）
+  ✅ 28 MySQL 容器没有 healthcheck —— 2026-10-19 已修 + down -v 实测通过
+  ✅ 29 UserServiceMockTest 断言过期 —— 2026-10-19 已注释旧断言（3/3 通过）
   ------------------------------------------------------------------
   ✅ 23 / 24 / 25 已实测通过 —— 23/25 于 2026-10-15，**24 于 2026-10-16（原判据）**
   ✅ 26 已修（2026-10-16）—— dev/prod 数据源统一到 3307 容器，数据已迁移
-  ✅ 20 已修（2026-10-13 b6b44d6）+ 判据④ 已实测通过（2026-10-16 演练全绿）
+  ✅ 20 已修（2026-10-13 b6b44d6）+ 判据④ 已实测通过
+        （2026-10-16 演练全绿；2026-10-19 加 healthcheck 后重建再次通过）
         ⇒ 部署阻塞项就此清空。见条目 20 的「✅ 现状」
   ★ 24 验了两次：10-15 用 Redis 夹具验机制（单条 + 批量 + 对照组）；
     10-16 补上 6 个真实章节后**按原判据重跑并跑通**。详见条目 24。
-  ★ 27 / 28 是 2026-10-15 实测过程中新发现的，见本文件下半部分。
+  ★ 27 / 28 是 2026-10-15 实测过程中新发现的，**均于 2026-10-19 已修**（见下半部分）。
   ★★ 2026-10-16 全量核实：下面所有 🟠/🟡/🟢 条目已**逐条到代码里核对**
      （核实表在「十」区开头）—— 12 条开着的里，**11 条真开放，1 条（13）是假的**。
 
-  【上线前必须改（安全隐患区 4/5/6/27）】
+  【上线前必须改（安全隐患区 4/6）】
   4     上传只校验 Content-Type                  🟠 可存储型 XSS
-  5     passwordHash 被写进 Redis 缓存           🟠 敏感信息落地
   6     CorsConfig 硬编码 localhost:5173          🟠 配置硬编码
-  27    注册/登录返回体带 passwordHash            🟠 敏感信息外泄
-        ★ 和 5 是**同一个根因**（返回/缓存实体而非 VO），建议一起修
+  ✅ 5 / 27 已修（2026-10-19，同一个根因：返回/缓存实体而非 VO）
+        → 新增 vo/UserVO.java（id / username / role），返回与缓存统一改用它
   ------------------------------------------------------------------
   【数据/性能（7/8/9）】
   7     排行榜没有防刷                            🟡 F5 即加热度
@@ -534,7 +537,7 @@
           否则下次换个人（或换个我）又会连错。
 
 
-  27. 🟠【2026-10-15 实测发现】注册接口的返回体里带着 passwordHash
+  27. ✅【2026-10-15 实测发现 / 2026-10-19 已修】注册接口的返回体里带着 passwordHash
 
       ── 现象 ──
         POST /users/register 返回：
@@ -564,8 +567,32 @@
         □ ★ 反向探针：故意给 UserVO 加回 passwordHash → 期望判据报警
           （验判据本身会不会漏）
 
+      ── ✅ 现状（2026-10-19）──
+        新增 vo/UserVO.java（白名单：id / username / role），并同步改签名：
+          · UserController.register → Result<UserVO>
+          · IUserService.register / getCurrentUser → UserVO
+          · LoginVO.userInfo: User → UserVO（登录 / refresh 都走它）
+          · getCurrentUser 的 Redis 缓存也改存 UserVO
+        ★ 代码层已确认：controller / vo 里 grep 不到 passwordHash。
+        ★ 实测（2026-10-19，端到端）：
+          · POST /users/register → code=200；响应体只有 id / username / role  ✅
+          · POST /users/login    → code=200；userInfo 同上                   ✅
+          · POST /users/refresh  → code=200；userInfo 同上                   ✅
+          · 刷新后同账号再 login → code=200                                  ✅
+            （证明密码没被写库清空，也收口了"刷新 → 再登录"链路）
+        ⚠ 附带发现（风险源已消除，**因果未实测**）：refresh() 旧代码里的
+          user.setPasswordHash(null) 理论上有 JPA 脏检查写库风险
+          （UPDATE user SET password_hash = NULL）。
+          ★ 但不能当结论：refresh() **没有 @Transactional**，也没有后续 save，
+            改动是否真会在请求结束时 flush，**没有实测证据**。
+          ⇒ 只能记为"疑似隐患"，不能说"它确实会写库"。
+          改用 UserVO.from(user) 后该行已删除，风险源不存在了。
+          ★ 可带走的原则：JPA 托管实体上的 setter **可能**变成一条 SQL ——
+            要写库就必须有事务/提交，光有 setter 不构成 UPDATE。
+        （问题 29 的旧断言已注释，纯单测 6/6 通过）
 
-  28. 🟡【2026-10-15 实测发现】MySQL 容器没有 healthcheck —— app 可能先于 MySQL 就绪
+
+  28. ✅【2026-10-15 实测发现 / 2026-10-19 已修】MySQL 容器没有 healthcheck —— app 可能先于 MySQL 就绪
 
       ── 现象 ──
         compose 里 redis 配了 healthcheck（interval 5s / retries 10），
@@ -601,6 +628,79 @@
         □ docker ps 里 mysql 出现 `(healthy)`
         □ ★ 反向探针：把 start_period 改成 1s → 期望短时间内显示 unhealthy
           （证明这个 healthcheck 真在判断，不是恒真）
+
+      ── ✅ 现状（2026-10-19）──
+        docker-compose.yml 已加：
+          mysql.healthcheck = mysqladmin ping -h 127.0.0.1 -uroot -p$MYSQL_ROOT_PASSWORD
+            interval 5s / timeout 3s / retries 10 / start_period 60s
+          app.depends_on.mysql.condition = service_healthy
+
+      ── ✅ 实测结果（2026-10-19，down -v 重建）──
+        · docker compose ps → mysql (healthy)                    ✅
+        · app 日志无 Communications link failure                  ✅
+        · SHOW TABLES → user / novel / chapter / bookshelf        ✅
+        · 时序：mysql Up 33s / app Up 22s（app 等了约 11 秒）      ✅
+        ★ 踩坑：healthcheck 里必须用 -h 127.0.0.1（TCP）。
+          用 -h localhost（Unix socket）时，MySQL 初始化阶段的
+          临时服务器（--skip-networking）会让检查提前报 healthy，
+          而 app 连 TCP 仍然失败 —— 判据必须和 app 的连接方式一致。
+        ⚠ 反向探针（start_period=1s → 期望 unhealthy）尚未做。
+
+
+  29. ✅【2026-10-19 实测发现 / 当天已修】UserServiceMockTest.testLoginSuccess 断言过期
+
+      ── 现象 ──
+        ./mvnw test → 该用例失败（第 124 行）：
+          expected: <null> but was: <$2a$fakehash>
+        其余 2 个 Mockito 用例通过；NovelServiceMockTest 3/3 通过。
+
+      ── 根因 ──
+        修问题 27 / 5 时（2026-10-19），UserServiceIml.login 不再原地
+        user.setPasswordHash(null)，改为返回 UserVO.from(user)。
+        测试仍断言旧实现的副作用（fakeUser 被清空），因此失败。
+        ★ 生产代码行为**符合预期**：密码不泄露，且不再修改传入实体。
+
+      ── 修法（测试代码）──
+        · 删掉 assertNull(fakeUser.getPasswordHash())
+        · 改成断言 vo.getUserInfo() 是 UserVO，且只有白名单字段
+        · 原注释掉的 assertNull(vo.getUserInfo().getPasswordHash()) 不可用 ——
+          UserVO 根本没有该字段（这本身就是修复的目标）
+
+      ── ✅ 处理结果（2026-10-19）──
+        已按他确认：把旧断言**注释掉**（与上面那条注释风格一致），不删历史。
+        复跑：./mvnw -Dtest=UserServiceMockTest test → **3/3 通过**。
+        ★ 当天起 Docker 后复跑全量：**18/18 全绿**（BUILD SUCCESS）。
+
+
+  30. 🟡【2026-10-19 记录】验证债：getCurrentUser 无法端到端验证（问题 5 的尾巴）
+
+      ── ✅ ① refresh 已验证（2026-10-19 已收口）──
+        POST /users/refresh → code=200，userInfo 只有 id / username / role；
+        紧接着同账号再 login → code=200 ⇒ 密码没被写库清空。
+        ★ 任务 27 至此三条链路（register / login / refresh）全部实测通过。
+
+      ── 🟡 ② getCurrentUser 仍未验 ──
+        getCurrentUser() 全项目**无任何调用点**（死代码），
+        所以缓存里是否还有 passwordHash，无法通过 HTTP 验证。
+        ★ 实测旁证（2026-10-19）：跑完 register/login/refresh 后
+          redis-cli --scan --pattern 'user:info:*' → **0 条**
+          ⇒ 印证了这个方法确实没人调用。
+        ★ 补法（二选一，需确认后再动代码）：
+          · 写 Mockito / 集成测试直接调 service，检查写入的 JSON
+          · 先接一个 GET /users/me 接口，用 curl 验响应体
+        ⚠ 在补验之前，问题 5 只能算"代码已改"，不能算"已解决"。
+
+      ★ 这是**判据债**，不是功能缺陷；别在问题清单里写成"已解决"。
+
+
+  31. 🟢【2026-10-19】Novel 里有个空方法 setChapters(List<Chapter>)
+
+      位置：entity/Novel.java:59
+        public void setChapters(List<Chapter> chapters) {
+        }
+      看起来是早期 @OneToMany 的残骸（设计决策 1 已明确不用关联映射）。
+      无功能影响，建议删除；留着容易让后来者误以为有关联关系。
+      ★ 未改代码，待确认。
 
 
   17. ✅【已实测通过（2026-10-07）】Dockerfile 的 JDK 版本与 pom 不匹配
@@ -722,11 +822,12 @@
      配合 /uploads/** 匿名静态映射 → 可上传 .html 造成存储型 XSS
      修法：扩展名白名单 + 文件头 magic number 校验
 
-  5. passwordHash 被写进 Redis 缓存
-     位置：UserServiceIml.getCurrentUser（★ 2026-10-16 核实：约 105~135 行）
-     现状：第 132 行 objectMapper.writeValueAsString(dbUser) ——
-           dbUser 是**整个 User 实体**（含 passwordHash），直接序列化进缓存
-     修法：缓存前 setPasswordHash(null)，或定义不含该字段的 CacheVO
+  ~~5. passwordHash 被写进 Redis 缓存~~ → ✅ 已修（2026-10-19）
+     位置：UserServiceIml.getCurrentUser
+     原现状：objectMapper.writeValueAsString(dbUser) 把整个 User（含 passwordHash）写缓存
+     现实现：writeValueAsString(UserVO.from(dbUser))；缓存命中 readValue(UserVO.class)
+     ★ 与问题 27 同一处修复（实体 → VO）。判据未实测：
+       getCurrentUser 全项目无调用点（见问题 30）。
 
   6. CorsConfig 硬编码 localhost:5173
      修法：提到配置文件
@@ -792,8 +893,8 @@
       原因：NoResourceFoundException 被兜底处理器捕获
       修法：单独处理，返回 404
 
-  【🟢 2026-10-05 代码规范化时新发现（原 5 处，2026-10-16 核实后已变）】
-    ★ 核实结果：N1 ✅ 已解决（抽成共用方法）／N2 仍开放（= 安全隐患 5）
+  【🟢 2026-10-05 代码规范化时新发现（原 5 处；2026-10-16 核实，2026-10-19 更新）】
+    ★ 核实结果：N1 ✅ 已解决（抽成共用方法）／N2 ✅ 已修（10-19，= 安全隐患 5）
       ／N3 仍开放／N4 ✅ 已解决／N5 仍开放
       ★ 另新发现 1 处 → N6（多余的空语句）
     ★ 完整版（含修法、验证方法）见 docs/项目笔记/08-代码质量.txt
@@ -805,9 +906,9 @@
           全文只剩**一处**时间比较（:178 的 `>=`）⇒ "两处不一致"已不成立。
           （原记"游客路径用 >=，严格路径用 >，约 69 / 116 行"，行号与事实均已过期）
 
-    N2. passwordHash 被写进 Redis 缓存      service/UserServiceIml.java
-        getCurrentUser 第 4 步，dbUser 没清密码就序列化写缓存
-        （= 上面的安全隐患 5，只是位置更精确）★ 仍开放（2026-10-16 核实）
+    ~~N2. passwordHash 被写进 Redis 缓存~~ → ✅ 代码已改（2026-10-19，= 安全隐患 5）
+        getCurrentUser 第 4 步已改为缓存 UserVO，不含 passwordHash
+        ⚠ 未运行时验证：getCurrentUser 无调用点（见问题 30）
 
     N3. LoginInterceptor 的空 catch 吞异常   config/LoginInterceptor.java
         游客路径 catch 块，注释说"保持日志干净"

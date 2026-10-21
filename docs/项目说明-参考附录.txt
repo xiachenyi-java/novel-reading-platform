@@ -123,7 +123,9 @@
       │                                  （2026-10-14 dc8f67a 新增）
       │                                  ★ 分页用 Page.map 映射，保住 totalElements/totalPages
       │                                  ⚠ 还没有章节统计字段（chapterCount）
-      └── LoginVO                      token / refreshToken / userInfo
+      ├── UserVO                       ★ 白名单：id / username / role（不含 passwordHash）
+      │                                  （2026-10-19 新增；注册 / 登录 / 当前用户返回它）
+      └── LoginVO                      token / refreshToken / userInfo（类型 UserVO）
 
   前端（novel-frontend/，实测 17 个 .vue + 2 个组合式函数）
   ├── src/api/index.js                 ★ axios 实例（自动带 Token，401 跳登录）

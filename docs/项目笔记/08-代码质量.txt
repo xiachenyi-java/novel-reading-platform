@@ -159,12 +159,17 @@ N1  ★ 黑名单过期判断的边界不一致  →  ✅ 已解决（2026-10-16
   【原修法】统一成一个私有方法，两处共用 —— ✅ 已按此实现
 
 --------------------------------------------------------------------------------
-N2  passwordHash 被写进 Redis 缓存
+N2  passwordHash 被写进 Redis 缓存  → ✅ 已修（2026-10-19）
 --------------------------------------------------------------------------------
   位置：service/UserServiceIml.java 的 getCurrentUser，第 4 步
 
+  原代码：
     String json = objectMapper.writeValueAsString(dbUser);
     stringRedisTemplate.opsForValue().set(key, json, 30, TimeUnit.MINUTES);
+
+  现代码（2026-10-19）：
+    String json = objectMapper.writeValueAsString(UserVO.from(dbUser));
+    // 缓存命中：objectMapper.readValue(userJson, UserVO.class)
 
   【问题】dbUser 是从数据库查出来的完整实体，passwordHash 还在里面。
 
@@ -179,8 +184,11 @@ N2  passwordHash 被写进 Redis 缓存
        ★ 注意：这会让方法返回的 User 也没有 passwordHash，
          需要先确认调用方有没有依赖这个字段
     b) 定义一个不含密码字段的 CacheVO，缓存和返回都用它（更干净）
+    ⇒ 实际采用 **b 的变体**：直接复用白名单 vo/UserVO（id / username / role），
+      缓存与返回都走它，同时修掉了问题 27（响应体泄露）。
 
   【验证】redis-cli GET user:info:1 → 返回值里不应出现 passwordHash
+          ⚠ 2026-10-19 代码已改，但**这条判据尚未实测**。
 
 --------------------------------------------------------------------------------
 N3  LoginInterceptor 的空 catch 吞掉异常
@@ -229,6 +237,37 @@ N5  通配符 import
   ★ 例外：org.springframework.web.bind.annotation.* 这类 Spring 注解的
     通配符导入在社区里被广泛接受（注解太多，逐个列反而难读），
     所以 NovelController 里那一处可以保留。
+
+--------------------------------------------------------------------------------
+N7  JPA 托管实体上的 setter 会变成 UPDATE（2026-10-19 发现并已消除）
+--------------------------------------------------------------------------------
+  位置：service/UserServiceIml.refresh()（旧代码）
+
+    User user = userRepository.findById(userId).orElseThrow(...);
+    user.setPasswordHash(null);   // ← 看着像"返回前清敏感字段"
+    vo.setUserInfo(user);
+
+  【问题（★ 待证实的猜想，不是实测结论）】findById 返回的是 JPA 托管实体，
+          对它的 setter 调用会把字段标记为脏；**如果**存在事务提交，
+          Hibernate 脏检查就会翻译成：
+            UPDATE user SET password_hash = NULL WHERE id = ?
+
+  【★ 关键限定】refresh() 方法**没有 @Transactional**，改完字段后也没有
+          save()。没有事务提交，就没有 flush —— 实际会不会写库，
+          **本项目没有实测过**。
+          ⇒ 这条只能作为"危险模式"记录，不能写成"曾经真的把密码清空"。
+
+  【为什么以前没看到问题】没人走过「登录 → 刷新 → 再登录」这条链路，
+          所以即便有风险也从未被触发（也可能根本没有触发条件）。
+
+  【修法】改用只读的 UserVO.from(user)（不碰实体），并删除那行 set。
+          ★ 想"清字段再返回"的三个安全做法：
+            ① 转 VO（只读）—— 本项目采用
+            ② session.detach(entity)
+            ③ DTO 投影查询
+          ✗ 绝不要直接 set 托管实体。
+
+  【验证】刷新后立刻再登录一次必须成功（见问题清单 30，**尚未实测**）。
 
 ================================================================================
 
