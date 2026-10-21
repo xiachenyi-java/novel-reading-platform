@@ -8,11 +8,13 @@ import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
-import java.util.concurrent.TimeUnit;
+import java.util.List;
+
 
 /**
  * 夏辰义
@@ -25,6 +27,17 @@ public class RateLimitAspect {
 
     private final StringRedisTemplate stringRedisTemplate;
 
+    private static final String RATE_LIMIT_LUA = """
+            local c = redis.call("INCR", KEYS[1])
+            if c == 1 then
+                redis.call("EXPIRE", KEYS[1], ARGV[1])
+            end
+            return c
+            """;
+
+    private static final DefaultRedisScript<Long> RATE_LIMIT_SCRIPT =
+            new DefaultRedisScript<>(RATE_LIMIT_LUA, Long.class);
+
     // ========== 限流切面：拦截所有带 @RateLimit 注解的方法 ==========
     @Around("@annotation(rateLimit)")
     public Object around(ProceedingJoinPoint point, RateLimit rateLimit) throws Throwable {
@@ -36,11 +49,11 @@ public class RateLimitAspect {
         String redisKey = "rate_limit:" + key + ":" + ip;
 
         // 固定窗口计数，INCR 是原子操作
-        Long count = stringRedisTemplate.opsForValue().increment(redisKey);
-        if (count != null && count == 1) {
-            // 只在第一次访问时设置过期时间
-            stringRedisTemplate.expire(redisKey, window, TimeUnit.SECONDS);
-        }
+        Long count = stringRedisTemplate.execute(
+                RATE_LIMIT_SCRIPT,
+                List.of(redisKey),
+                String.valueOf(window)
+        );
         if (count != null && count > limit) {
             throw new RateLimitException("请求过于频繁，请稍后再试");
         }
