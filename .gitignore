@@ -27,6 +27,7 @@ logs/
 uploads/
 build.log
 *.log
+novel-frontend/dist/
 
 ### STS ###
 .apt_generated
