@@ -30,6 +30,12 @@ public class Novel {
     @Column(nullable = false, length = 100)
     private String author;//作者
 
+    @Column(length = 50)
+    private String platform;//平台
+
+    @Column(length = 500)
+    private String sourceUrl;//正版链接
+
     @Column(length = 2000)
     private String summary; //简介
 

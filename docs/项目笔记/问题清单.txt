@@ -1,7 +1,7 @@
 ================================================================================
               项目笔记 · 问题清单（已知问题与坑）
                           小说管理系统
-                    最后更新：2026-10-21
+                    最后更新：2026-10-22
 ================================================================================
 
 【这份文档是什么】
@@ -29,6 +29,10 @@
   33    chapter 唯一约束没进库                    🔴 数据   实体声明了、库里没有
   34    addChapter/deleteChapter 锁不一致         🟠 并发   发/删章节会互相干扰
   35~43 本轮新发现的其他 9 条                    🟡/🟢     见「2026-10-21 审查」区
+  44~49 2026-10-22 公网部署新发现                🟠/🟡/🟢   见「2026-10-22 部署」区
+        · 44 uploads 无卷（重建丢图）｜46 端口映射宿主机
+        · 45 日志无卷｜47 Security 默认配置｜48 override 待合并
+        · 49 前端主 chunk 1.3MB（🟢 优化点）
   ✅ 27 注册/登录返回体带 passwordHash —— 2026-10-19 已修（register/login/refresh 全实测）
   ✅ 28 MySQL 容器没有 healthcheck —— 2026-10-19 已修 + down -v 实测通过
   ✅ 29 UserServiceMockTest 断言过期 —— 2026-10-19 已注释旧断言（3/3 通过）
@@ -1031,6 +1035,60 @@
         位置：application-prod.properties:34  https://your-domain.com
         后果：上线后所有封面图 URL 都是坏链
         修法：改环境变量 ${FILE_BASE_URL:...}
+
+  【🟠 2026-10-22 公网部署时新发现（均未修复）】
+
+    44. uploads 目录没有挂 volume —— 🟠 数据丢失
+        位置：docker-compose.yml 的 app 服务，volumes 一个都没挂
+        后果：docker compose down/up 或重建镜像后，**已上传的封面图全丢**
+              （容器内 /app/uploads 随容器一起被删除）
+        修法：给 app 加
+                volumes:
+                  - ./uploads:/app/uploads
+              并在服务器上 mkdir -p /opt/book/uploads
+        验证：上传一张图 → docker compose down && up -d → 图还在
+        ★ 这条和"迁 OSS"无关，是独立的数据安全问题；
+          今天之所以没炸，是因为还没人上传过图
+
+    45. 日志写在容器内，没挂卷 —— 🟡 排障
+        位置：application-prod.properties:17
+              logging.file.name=/var/log/book-manager/app.log
+        后果：容器重建后历史日志全丢；出问题想回溯时已经没了
+        修法：挂 ./logs:/var/log/book-manager，
+              或改成只输出 stdout 用 docker logs 看
+
+    46. 生产 compose 把 MySQL / Redis 端口映射到宿主机 —— 🟠 安全
+        位置：docker-compose.yml:9（3307:3306）、:24（6379:6379）
+        后果：只要安全组误放行，MySQL 和 Redis 直接裸奔公网
+              （Redis 裸奔是自动化挖矿最常见的入口）
+        修法：生产 compose 删掉这两个 ports，容器之间用服务名访问即可
+        验证：docker compose ps 的 PORTS 列只剩 nginx 的 8080
+
+    47. Spring Security 自动配置生效 —— 🟡 安全面 / 行为未知
+        位置：app 启动日志
+              Using generated security password: d82fabf2-...
+              Global AuthenticationManager configured with
+              UserDetailsService bean with name inMemoryUserDetailsManager
+        后果：说明 classpath 里有 spring-boot-starter-security 但**没有
+              SecurityConfig**，Spring 自动生成了一个内存用户 + 随机密码。
+              目前 /novels 等接口仍能匿名访问，但这套默认配置
+              本来就不该出现在生产里
+        修法：确认真需不需要 Security；需要就显式写 SecurityConfig，
+              不需要就从 pom 移除 starter
+        验证：启动日志不再出现 "Using generated security password"
+
+    48. docker-compose.override.yml 是临时方案 —— 🟡 可维护性
+        位置：/opt/book/docker-compose.override.yml（**服务器上，不在 git 里**）
+        后果：Nginx 配置藏在 override 里，半年后改 compose 时容易漏
+        修法：稳定后把 override 合并进 docker-compose.yml，删掉 override
+        ★ 今天故意这么做的原因：不动原文件、随时可回滚
+
+    49. 前端主 chunk 1.3MB（gzip 427KB）—— 🟢 性能
+        位置：vite build 输出 index-*.js
+        原因：main.js 里 `import ElementPlus from 'element-plus'` 全量引入
+        后果：首屏多传约 400KB（200M 带宽下无感，用户多了才明显）
+        修法：改按需引入（unplugin-vue-components + unplugin-auto-import）
+        备注：不影响功能，只作为优化点记录
 
     【同批发现、2026-10-21 已改代码（未实测，记录用）】
       · 问题 4 上传校验：白名单 + magic bytes + 2500 万像素上限 + 重编码

@@ -16,11 +16,20 @@ public class User {
     private Integer id;
 
     @Column(nullable = false, unique = true)
-    private String username;
+    private String username;//名字
 
     @Column(nullable = false, length = 60)
-    private String passwordHash;
+    private String passwordHash;//密码
 
     @Column(nullable = false)
     private String role = "USER";//默认是用户
+
+    @Column(length = 255)
+    private String bio;//人格
+
+    @Column(length = 255)
+    private String areas;//擅长领域
+
+    @Column(name = "is_ai", nullable = false)
+    private Integer isAi = 0;//是不是ai
 }

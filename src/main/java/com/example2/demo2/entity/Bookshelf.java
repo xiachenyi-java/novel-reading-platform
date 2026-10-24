@@ -42,7 +42,7 @@ public class Bookshelf {
     @Column(nullable = false)
     private Integer isTop = 0;//置顶,0是未置顶
 
-    private LocalDateTime topTime;        // 可为 null（未置顶）
+    private LocalDateTime topTime; // 可为 null（未置顶）
 
     //审计
     @Column(nullable = false)
