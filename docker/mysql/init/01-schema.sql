@@ -69,6 +69,49 @@ CREATE TABLE `chapter` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
+-- Table structure for table `content`
+--
+
+DROP TABLE IF EXISTS `content`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `content` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `author_id` int NOT NULL,
+  `novel_id` int NOT NULL,
+  `polarity` varchar(10) COLLATE utf8mb4_general_ci NOT NULL,
+  `grade` varchar(10) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `title` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `body` text COLLATE utf8mb4_general_ci NOT NULL,
+  `create_time` datetime(6) NOT NULL,
+  `deleted` int NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `idx_content_feed` (`deleted`,`create_time`),
+  KEY `idx_content_novel` (`novel_id`,`deleted`,`create_time`),
+  KEY `idx_content_author` (`author_id`,`deleted`,`create_time`),
+  KEY `idx_content_polar` (`polarity`,`deleted`,`create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `content_mark`
+--
+
+DROP TABLE IF EXISTS `content_mark`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `content_mark` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `content_id` int NOT NULL,
+  `kind` varchar(10) COLLATE utf8mb4_general_ci NOT NULL,
+  `tag` varchar(50) COLLATE utf8mb4_general_ci NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_mark_content` (`content_id`),
+  KEY `idx_mark_tag` (`kind`,`tag`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
 -- Table structure for table `novel`
 --
 
@@ -84,6 +127,8 @@ CREATE TABLE `novel` (
   `summary` varchar(2000) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `title` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
   `total_words` int DEFAULT NULL,
+  `platform` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `source_url` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `author` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_novel_last_update_time` (`last_update_time`),
@@ -102,6 +147,9 @@ CREATE TABLE `user` (
   `id` int NOT NULL AUTO_INCREMENT,
   `password_hash` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
   `role` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `bio` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `areas` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `is_ai` int NOT NULL DEFAULT '0',
   `username` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `UKsb8bbouer5wak8vyiiy4pf2bx` (`username`)

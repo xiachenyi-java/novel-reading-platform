@@ -44,8 +44,11 @@ public class LoginInterceptor implements HandlerInterceptor {
         String path = request.getServletPath();
         String method = request.getMethod();
 
-        // 游客规则：GET 请求 + 路径以 /novels 开头
-        boolean isGuestEndpoint = "GET".equalsIgnoreCase(method) && path.startsWith("/novels");
+        // 游客规则：GET 请求 + 路径以 /novels 或 /contents 或 /authors 开头
+        boolean isGuestEndpoint = "GET".equalsIgnoreCase(method)
+                && (path.startsWith("/novels")
+                || path.startsWith("/contents")
+                ||path.startsWith("/authors"));
         String token = request.getHeader("Authorization");
 
         // 去掉 Bearer 前缀

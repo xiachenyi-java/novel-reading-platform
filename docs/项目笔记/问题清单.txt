@@ -1090,6 +1090,85 @@
         修法：改按需引入（unplugin-vue-components + unplugin-auto-import）
         备注：不影响功能，只作为优化点记录
 
+  【🔴 2026-10-24 书评数据底座落地时新发现（均未修复）】
+
+    50. ✅ 01-schema.sql 已补（2026-10-24）—— ⚠ Docker 空卷还没实测
+        位置：docker/mysql/init/01-schema.sql
+        已补：content / content_mark 建表；
+              user 加 bio / areas / is_ai；novel 加 platform / source_url
+        已验证：导入本机 MySQL 临时库 book_db_schema_check（不碰 book_db）
+                ⇒ 6 张表齐全；字段与实体一致；4 + 2 个索引都在；
+                  中文 tag 存成 E78382E5B0BE（UTF-8 正确）
+        未验证：docker compose down -v && up --build（Docker Desktop 未启动）
+        ★ 下次启动 Docker 后必须补这一跑，否则只算"静态验证通过"，
+          不算真修好 —— prod 的 ddl-auto=validate 还没被真实触发过
+
+    51. dev 连 3306、prod/Docker 连 3307 —— 🟡 环境口径分歧（非缺陷）
+        位置：application-dev.properties:6
+        现状：夏辰义 2026-10-24 确认 —— **为了本地开发方便，有意连本机 MySQL 3306**
+        风险：与问题 26 定下的"统一 3307"口径不一致；
+              3306 的库不归 compose 管，down -v 验证不到 schema.sql
+        建议：保留 3306，但把注释改成"本地开发专用；验证 schema 时临时切 3307"，
+              别在两个端口之间反复改（每次改都会让验证口径漂移）
+        验证：临时切 3307 → docker compose down -v && up --build → SHOW TABLES 6 张
+
+    52. ✅ 内容流骨架已打通 —— 2026-10-27（原"只有骨架"已不成立）
+        已完成：IContentService / ContentServiceIml（列表 + 软删）
+                ContentController / AuthorController / AuthorProfileVO
+                UserService.getAuthorProfile（contentCount 用 count 查询，无 N+1）
+        实测：GET /contents 匿名 200；GET /authors/1 code 200；
+              匿名 DELETE /contents/{id} → HTTP 401
+        未完成：AI 生成接口、前端、种子数据（content 表仍 0 行）
+
+    55. @Transactional 放错方法 —— 🟠 需挪位置
+        位置：ContentServiceIml.java:43（findPageContents 上）
+        现状：@Transactional(rollbackFor = Exception.class) 加在**只读查询**上，
+              softDelete（第 134 行）仍然没有事务注解
+        后果：现在软删只有一次 update，不加也能成功；
+              但违反决策 8，且以后加"删标签"等多写操作就会不一致
+        修法：把注解从 findPageContents 挪到 softDelete
+              （查询想加事务就用 @Transactional(readOnly = true)）
+
+    56. 非法 polarity 丢了分页信息 —— 🟡 前端体验
+        位置：ContentServiceIml.java:54
+        现状：IllegalArgumentException 时 return Page.empty()
+        实测：序列化后 "pageable":"INSTANCE", "size":0, "totalPages":1
+        后果：前端分页组件可能按 size=0 算错
+        修法：return Page.empty(pageable);   // pageable 上面已构造好
+        备注：第 74 行 contentPage.map(c -> null) 同理，可简化
+
+    57. softDelete 不过滤 deleted —— 🟢 低优先级
+        位置：ContentServiceIml.softDelete（findById）
+        现状：已删除的记录再删一次仍然"成功"（deleted 保持 1）
+        影响：不炸，但接口语义应该是"已经删了"
+        修法：findByIdAndDeleted(id, 0)，或先判断 deleted
+        备注：和问题 55 一起改最顺（都在 softDelete 里）
+
+    53. ✅ Content 索引正常建成 —— 2026-10-26 实测（原判断是假阳性）
+        位置：Content.java:18-21
+        原担心：columnList 写的是属性名 createTime，库里列名是 create_time，
+                索引可能建不出来
+        实测：SHOW INDEX FROM book_db.content
+              ⇒ 4 个 idx_content_* 全部存在，第 2/3 列都是 create_time
+        结论：Hibernate 6 会按逻辑名 → 物理列名映射，columnList 写属性名可用
+        ★ 留个教训：没实测就写"大概率没建成"是**假阳性**。
+          下次先 SHOW INDEX，再下结论。
+        遗留：@Table(indexes) 仍然只管新建表，不给已存在的表补约束（问题 21）
+
+    54. 枚举列类型两边不一致 —— 🟠 需拍板
+        现象：本机 3306（ddl-auto=update 自动建表）
+                polarity  enum('NOTE','REC','WARN')
+                grade     enum('BAD','GOD','GOOD','OK')
+              docker/mysql/init/01-schema.sql（手工）
+                polarity  varchar(10)
+                grade     varchar(10)
+        风险：prod 是 ddl-auto=validate，enum 与 varchar 的校验是否通过
+              **未实测**；以后从 3306 dump 覆盖 schema.sql 会把类型带成 enum
+        建议二选一（必须统一）：
+          A. schema.sql 改成 enum —— 严格，但加枚举值要 ALTER TABLE
+          B. 实体加 @Column(columnDefinition = "varchar(10)") —— 灵活，推荐
+        验证：prod 容器能起来（validate 不报 wrong column type）
+
     【同批发现、2026-10-21 已改代码（未实测，记录用）】
       · 问题 4 上传校验：白名单 + magic bytes + 2500 万像素上限 + 重编码
       · 排行榜 top 传 0 / 负数会拉全量：controller + service 双层兜底

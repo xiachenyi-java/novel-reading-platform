@@ -237,17 +237,11 @@ export const isMockId = (id) => Number(id) >= 9000
 
 /**
  * 书名 → 固定的封面配色类名（cv1 ~ cv6）
- * ★ 为什么不随机：随机会导致**刷新一下颜色就变**，
- *   而且同一本书在发现页和详情页是两个颜色 —— 一眼就露馅。
- *   这里用书名算哈希，所以一本永远对应一个颜色。
+ * ★ 2026-10-27 起挪到 utils/cover.js —— 真实数据也要上色，
+ *   不能让真实内容流反过来 import 假数据文件。
+ *   这里 re-export 一次，老页面的 import 一行都不用改。
  */
-export function coverColor(title = '') {
-  let h = 0
-  for (let i = 0; i < title.length; i++) {
-    h = (h * 31 + title.charCodeAt(i)) % 9973
-  }
-  return `cv${(h % 6) + 1}`
-}
+export { coverColor } from '../utils/cover'
 
 // ==========================================================================
 //  三、内容流（发现页 / 作者页 / 详情页的书评共用一套结构）

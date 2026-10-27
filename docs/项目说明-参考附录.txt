@@ -165,6 +165,11 @@
     username      VARCHAR(255) NOT NULL UNIQUE
     password_hash VARCHAR(60)  NOT NULL        BCrypt
     role          VARCHAR(255) NOT NULL        默认 "USER"，管理员是 "ADMIN"
+    bio           VARCHAR(255)                 一句话人设（2026-10-24 加）
+    areas         VARCHAR(255)                 擅长领域，逗号分隔
+    is_ai         INT NOT NULL 默认 0          1 = AI 账号（列名 is_ai）
+    ★ 三列目前只在实体 + 索引里，01-schema.sql **未同步**（问题 50）
+    ★ 不要放进 UserVO（登录态）；公开资料走 AuthorProfileVO
 
   novel
     id               INT PK AUTO_INCREMENT
@@ -177,7 +182,10 @@
     category         VARCHAR(255) NOT NULL     自由文本，不是枚举
     status           VARCHAR(255) NOT NULL     "ONGOING" / "FINISHED"
     total_words      INT                       冗余字段（见正文决策 2）
+    platform         VARCHAR(50)               正版平台（2026-10-24 加）
+    source_url       VARCHAR(500)              正版阅读链接（可空 → 前端置灰）
     last_update_time DATETIME(6) NOT NULL      @PrePersist / @PreUpdate 自动维护
+    ★ platform / source_url 目前只在实体里，01-schema.sql 未同步（问题 50）
     索引：PRIMARY(id)
           idx_novel_last_update_time (last_update_time)
           idx_novel_category_last_update_time (category, last_update_time)
@@ -214,15 +222,41 @@
     ★ 唯一约束 2026-10-10 已补进库（原问题 21 已解决）
     ★ 共 4 个索引（PRIMARY + 1 UK + 2 KEY），与设计文档 1.1 节一致
 
+  content（书评，软删除；2026-10-24 新增实体）
+    id          INT PK AUTO_INCREMENT
+    author_id   INT NOT NULL              user.id（真人和 AI 都在 user 表）
+    novel_id    INT NOT NULL              手动关联，无外键
+    polarity    VARCHAR(10) NOT NULL      REC 推荐 / WARN 避雷 / NOTE 长评
+    grade       VARCHAR(10)               GOD 仙草 / GOOD 粮草 / OK 干草 / BAD 毒草
+    title       VARCHAR(255) NOT NULL
+    body        TEXT NOT NULL             ★ 列名是 body（text 是 MySQL 关键字），
+                                          接口返回字段仍叫 text
+    create_time DATETIME(6) NOT NULL      @PrePersist 自动填
+    deleted     INT NOT NULL 默认 0
+    索引（实体声明）：idx_content_feed / idx_content_novel /
+                      idx_content_author / idx_content_polar
+    ⚠ 索引大概率**没建成**：columnList 写的是属性名 createTime，
+      库里列名是 create_time；且 @Table(indexes) 不给已有表补约束（问题 53）
+    ⚠ 设计文档里的 like_count / comment_count **代码还没加**
+
+  content_mark（书评标签；2026-10-24 新增实体）
+    id         INT PK AUTO_INCREMENT
+    content_id INT NOT NULL
+    kind       VARCHAR(10) NOT NULL       GOOD 亮点 / WARN 雷点
+    tag        VARCHAR(50) NOT NULL       烂尾 / 水字数 / 文笔好 ...
+    索引：idx_mark_content (content_id) / idx_mark_tag (kind, tag)
+
   ★ 时间字段用 @PrePersist / @PreUpdate 自动维护，
     不要在 Service 里手写 setCreateTime(LocalDateTime.now())
 
   ★★ 表结构改动是"三处同步"，少一处就出事（详见正文 §六 常见任务入口）：
      实体类 / dev 库（ddl-auto=update 自动）/ docker 的 01-schema.sql（手工 dump）
+     ⚠ 2026-10-24 这次就漏了第三处：content / content_mark 和 user / novel
+       新字段都只在实体里 → 问题 50
 
 
 ################################################################################
-  附 C、接口清单（共 21 个）
+  附 C、接口清单（共 25 个）
 ################################################################################
 
   【用户模块 /users】
@@ -280,6 +314,29 @@
                                             ★ 用 POST 不是 DELETE（带 body 且防越权）
   ------------------------------------------------------------------
   ★ 返回值目前是**实体 Bookshelf**，不是 VO（见项目笔记/14 步骤 3 尾巴）
+
+  【内容流模块 /contents】（2026-10-27 新增，Day 1）
+  ------------------------------------------------------------------
+  方法   路径                 权限    说明
+  ------------------------------------------------------------------
+  GET    /contents            游客    内容流列表
+                                      参数 page/size/polarity/novelId/
+                                           userId/keyword（全部后端过滤）
+                                      page<1 兜底 1；size 1~100
+                                      返回 Page<ContentVO>：
+                                        id/polarity/grade/title/text/createTime
+                                        author{id,username,isAi}
+                                        novel{id,title,author,category,coverUrl}
+  DELETE /contents/{id}      管理员  软删（deleted=1）
+  ------------------------------------------------------------------
+  ★ 匿名可访问由 LoginInterceptor 的游客白名单放行
+  ★ 返回 VO 不返回实体（Content 无敏感字段，但仍统一）
+
+  【书评人模块 /authors】（2026-10-27 新增，Day 1）
+  ------------------------------------------------------------------
+  GET    /authors/{id}       游客    书评人公开资料
+                                      返回 id/username/bio/areas/isAi/contentCount
+  ------------------------------------------------------------------
 
   【统一响应格式】
     { "code": 200, "msg": "success", "data": ... }

@@ -5,8 +5,23 @@
 ================================================================================
 
 ################################################################################
-  ★★ 最新交接（2026-10-23）—— AI 每轮开工先读这一段，别急着翻文件
+  ★★ 最新交接（2026-10-27）—— AI 每轮开工先读这一段，别急着翻文件
 ################################################################################
+
+  ★★ 2026-10-27 前端首页接内容流真接口（Day 3 开始）
+    ✅ FeedView 改调 GET /contents：全部 / 推荐 / 避雷 + 加载更多
+    ✅ 新增 api/content.js、components/ContentCard.vue、utils/cover.js
+       （coverColor 从 mock/data.js 挪到 utils，mock 里改成 re-export，老页面零改动）
+    ✅ 卡片展示：作者 / AI 标（D2）/ 态度 / 档位 / 关联书；
+       正文超 3 行才给「展开全文」（按高度判断，不按字数猜）
+    ✅ 加载中 / 报错 / 空 三态分开；业务失败按 body.code 判，不只看 HTTP 200
+    ⚠ 右栏三个榜（避雷榜 / 口碑推荐 / 热门雷点）没有后端聚合接口 → 已撤掉，
+      首页改成 760px 单栏
+    🔲 未接：AuthorView（GET /authors/{id} + /contents?userId）、
+      详情页书评区（GET /contents?novelId）、正版跳转
+      （NovelDetailVO 还没有 platform / sourceUrl，按钮暂时接不了）
+    ⚠ 验证欠账：Vite 编译通过；**没做浏览器视觉验证**（浏览器工具不可用），
+      且后端未启动、content 表仍 0 行 ⇒ 现在打开首页走的是「报错态」
 
   ★★ 2026-10-23 产品方向定案（D1 ~ D7）
     · D1 章节**保留**，管理员独占"平台自营试读"；用户端不做正文
@@ -28,6 +43,33 @@
     · ⏸ 暂不做：定时自动挑书（+0.5 天，可随时补）、公版书全文深评（+2 天）
     · 表名 / 接口名权威 → docs/设计/前端改版-设计方案.txt 顶部
     → 明天从「3 个书评人人设 + 10 本书的正版链接」开始
+
+  ★★ 2026-10-27 内容流后端打通（Day 1 完成，已实测）
+    ✅ IContentService / ContentServiceIml：分页 + 极性/书/作者/关键词过滤，
+       批量 findAllById 查 user/novel 防 N+1，body→text 映射
+    ✅ ContentController：GET /contents（匿名）、DELETE /contents/{id}（@RequireAdmin）
+    ✅ AuthorController：GET /authors/{id} + AuthorProfileVO + UserService 查询
+    ✅ LoginInterceptor 游客放行 /contents /authors
+       ★ 修过一次 && / || 优先级漏洞：曾让匿名 DELETE 直接进 Service
+    ✅ 实测：GET /contents 200；GET /authors/1 200；匿名 DELETE 401
+    🔲 未做：AI 生成（Day 2）、前端作者页 / 详情页书评区、种子数据（content 仍 0 行）
+       （首页 FeedView 已于 2026-10-27 接上，见上方最新交接）
+    🟠 问题 55：@Transactional 放错方法（softDelete 仍无事务）
+    🟡 问题 56：非法 polarity 返回 Page.empty() 丢分页信息
+
+  ★★ 2026-10-24 书评数据底座落地（Day 1 开工）
+    ✅ 提交 a9eea2f + 未提交改动：
+       · 实体 Content / ContentMark
+       · 枚举 Polarity(REC/WARN/NOTE) / Grade(GOD/GOOD/OK/BAD) / MarkKind(GOOD/WARN)
+       · User 加 bio / areas / isAi（列名 is_ai，Integer 0/1）
+       · Novel 加 platform / sourceUrl
+       · ContentRepository（JpaSpecificationExecutor）/ ContentMarkRepository
+         （含 findByContentIdIn 批量查）/ ContentSpecifications
+    🔲 骨架未通：IContentService 是空接口；ContentVO 已写；无 Service / Controller / 前端
+    🔴 问题 50：docker/mysql/init/01-schema.sql **没同步** —— 仍然只有 4 张表，
+       user / novel 新字段也没有 ⇒ prod ddl-auto=validate 起不来
+    🔴 问题 51：application-dev.properties 改回 localhost:3306（问题 26 回归）
+    ⚠ 设计文档 content 没有 grade 字段，代码新增 Grade 枚举 —— 待拍板是否写回设计
 
   ── 以下为 2026-10-22 交接，仍有效 ──
 
@@ -186,8 +228,8 @@
   ★ 这四份"字典"统一放在一份文件里，本文件**不再放副本**：
 
         docs/项目说明-参考附录.txt
-          附 A  目录结构     后端 50 类 + 前端 17 个 .vue + 2 组合式函数
-          附 B  数据模型     4 张表 + 索引 + 字段说明
+          附 A  目录结构     后端 61 类 + 前端 20 个 .vue + 2 组合式函数
+          附 B  数据模型     6 张表（实体口径；schema.sql 仍 4 张）+ 索引 + 字段说明
           附 C  接口清单     21 个接口（路径 / 权限 / 限流）
           附 D  Redis Key    8 个业务 key + Spring Cache 2 个缓存区
 

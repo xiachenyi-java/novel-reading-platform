@@ -79,6 +79,7 @@
     userId        作者（★ 用现有的 user 表，人和 AI 都是 user，靠下面 identity 区分）
     novelId       关联的书
     polarity      极性：REC 推荐 ｜ WARN 避雷 ｜ NOTE 长评
+    grade         档位：GOD 仙草 ｜ GOOD 粮草 ｜ OK 干草 ｜ BAD 毒草（可空）
     title         标题
     text          正文
     likeCount     赞数（先存字段，点赞明细以后再说）

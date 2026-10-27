@@ -164,6 +164,7 @@
     author_id     int NOT NULL,                -- user.id（书评人，真人和 AI 都在这里）
     novel_id      int NOT NULL,                -- 评的是哪本书
     polarity      varchar(10) NOT NULL,        -- REC 推荐 / WARN 避雷 / NOTE 长评
+    grade         varchar(10),                 -- GOD 仙草 / GOOD 粮草 / OK 干草 / BAD 毒草
     title         varchar(255) NOT NULL,
     body          text NOT NULL,               -- 正文
     like_count    int NOT NULL DEFAULT 0,      -- 冗余，见 3.6
@@ -184,6 +185,15 @@
   【为什么 polarity 不用 0/1/2 数字】
     数字存库省 1 个字节，但读代码时没人知道 2 是什么。
     用字符串 REC / WARN / NOTE，可读性优先。
+
+  【为什么另加 grade（2026-10-24 追加）】
+    polarity 回答"我推不推荐"，grade 回答"这本书本身值几档"——两者不重合：
+      · 长评(NOTE) 也可能是 GOOD（想认真聊聊一本好书）
+      · 避雷(WARN) 也可能是 OK（有雷点，但整体能看）
+    ★ 四档用网文圈黑话：仙草 / 粮草 / 干草 / 毒草，用户一看就懂，
+      比 1~5 星更贴合这个圈子的表达习惯。
+    ★ 可空：AI 没把握时可以只给 polarity，不硬凑档位。
+    ★ 枚举类：enums/Grade.java（GOD / GOOD / OK / BAD）
 
   【三态语义（这是产品差异点）】
     REC  推荐 —— "这本书值得看"

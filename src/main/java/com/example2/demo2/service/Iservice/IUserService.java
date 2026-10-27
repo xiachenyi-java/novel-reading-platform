@@ -2,6 +2,7 @@ package com.example2.demo2.service.Iservice;
 
 import com.example2.demo2.dto.LoginDTO;
 import com.example2.demo2.dto.UserRegisterDTO;
+import com.example2.demo2.vo.AuthorProfileVO;
 import com.example2.demo2.vo.LoginVO;
 import com.example2.demo2.vo.UserVO;
 
@@ -21,4 +22,7 @@ public interface IUserService {
 
     //5.用户登出
     void logout(Integer userId, String accessToken);
+
+    //6.作者简介
+    AuthorProfileVO getAuthorProfile(Integer userId);
 }

@@ -7,12 +7,16 @@ import com.example2.demo2.dto.LoginDTO;
 import com.example2.demo2.dto.UserContextDTO;
 import com.example2.demo2.dto.UserRegisterDTO;
 import com.example2.demo2.entity.User;
+import com.example2.demo2.repository.ContentRepository;
+import com.example2.demo2.repository.ContentSpecifications;
 import com.example2.demo2.repository.UserRepository;
 import com.example2.demo2.service.Iservice.IUserService;
+import com.example2.demo2.vo.AuthorProfileVO;
 import com.example2.demo2.vo.LoginVO;
 import com.example2.demo2.vo.UserVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -36,6 +40,7 @@ public class UserServiceIml implements IUserService {
     private final JwtUtil jwtUtil;
     private final ObjectMapper objectMapper;
     private final StringRedisTemplate stringRedisTemplate;
+    private final ContentRepository  contentRepository;
 
 
     // ========== 1. 登录 ==========
@@ -214,5 +219,27 @@ public class UserServiceIml implements IUserService {
             // 建议给整个 key 设置过期时间，避免黑名单 key 永不过期
             stringRedisTemplate.expire(key, 120, TimeUnit.MINUTES);
         }
+    }
+
+    @Override
+    public AuthorProfileVO getAuthorProfile(Integer userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() ->  new BusinessException("书评人不存在"));
+
+        Long count = contentRepository.count(
+                Specification.allOf(
+                        ContentSpecifications.notDeleted(),
+                        ContentSpecifications.authorIdEquals(userId)
+                )
+        );
+        AuthorProfileVO vo = new AuthorProfileVO();
+        vo.setId(user.getId());
+        vo.setUsername(user.getUsername());
+        vo.setBio(user.getBio());
+        vo.setAreas(user.getAreas());
+        vo.setIsAi(user.getIsAi() != null && user.getIsAi() == 1);
+        vo.setContentCount(count != null ? count : 0L);
+
+        return vo;
     }
 }

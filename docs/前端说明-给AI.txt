@@ -75,7 +75,9 @@
       ├── components/
       │   ├── SiteHeader.vue        ★ 全站统一顶部导航（插槽用法见第四章）
       │   ├── SiteFooter.vue        页脚（登录/注册/静态页在用）
-      │   └── StaticPageLayout.vue  静态页外壳（About/Contact/Feedback/Privacy/Terms 在用）
+      │   ├── StaticPageLayout.vue  静态页外壳（About/Contact/Feedback/Privacy/Terms 在用）
+      │   └── ContentCard.vue       ★ 书评卡片（2026-10-27 新增，首页在用；
+      │                              作者页 / 详情页的书评区下一步复用它）
       ├── composables/
       │   ├── useAuth.js            isLogin / isAdmin / username / requireLogin / logout
       │   │                          ★ 各 View 直接 import，不用 props 层层传
@@ -86,6 +88,9 @@
       │   │                           变成"昨晚"；formatWords() 字数 —— 123456
       │   │                           变成"12.3 万字"。书架页在用；设计稿里那几个
       │   │                           页面要"昨晚"也是 import 这一份，别各写一份
+      │   ├── cover.js              coverColor()：书名 / 用户名 → 固定封面色
+      │   │                          ★ 2026-10-27 从 mock/data.js 挪出来 ——
+      │   │                            真实内容流也要上色，不能再反向 import 假数据
       │   └── normalize.js          ★ 接口返回字段名兼容（2026-10-16 新增）：
       │                               rankItem() / rankList() —— 排行榜接口的字段名
       │                               是**大写开头**的（NovelId/Title/Heat），
@@ -104,7 +109,9 @@
       │   ├── index.js              ★ axios 实例 + 请求拦截（带 Token）+ 响应拦截（401/403）
       │   ├── novel.js              小说/章节/上传/分类/排行榜
       │   ├── bookshelf.js          书架 5 个接口
-      │   └── user.js               登录 / 注册 / 退出（退出会通知后端拉黑 token）
+      │   ├── user.js               登录 / 注册 / 退出（退出会通知后端拉黑 token）
+      │   └── content.js            ★ 内容流（2026-10-27 新增）：
+      │                              GET /contents + DELETE /contents/{id}
       ├── router/index.js           13 条路由 + 全局守卫（见第六章）
       └── views/
           ├── FeedView.vue          ★★ 首页 = 发现（内容流）2026-10-15 新增
@@ -289,7 +296,7 @@
 
 
 ################################################################################
-  七、接口层（前端调了 20 个后端接口）
+  七、接口层（前端调了 21 个后端接口）
 ################################################################################
 
   ★ 请求细节（参数名/返回结构）去查《项目说明-参考附录.txt》附 A，这里只列清单。
@@ -298,6 +305,19 @@
   ## api/user.js
     POST /users/login              POST /users/register
     POST /users/logout             ★ 2026-10-14 接上；传 token 进 headers（原因见第八章）
+
+  ## api/content.js（2026-10-27 新增）
+    GET    /contents?page&size&polarity&novelId&userId&keyword   首页内容流（已接）
+    DELETE /contents/{id}                                       软删（管理员；已封装，页面暂未用）
+
+    ★ 返回 Result<Page<ContentVO>>，字段：
+      id / polarity(REC|WARN|NOTE) / grade(GOD|GOOD|OK|BAD，可空) /
+      title / text / createTime / author{id,username,isAi} /
+      novel{id,title,author,category,coverUrl}
+    ★ 和设计稿的差距：**没有** marks（雷点/亮点）、字数、评分、点赞数
+      → 卡片上这几块就不显示，别再从 mock 里凑
+    ★ 列表 / 极性全部走后端过滤，前端不拉全量再筛
+    ★ 业务失败是 HTTP 200 + body.code=500，必须判 code
 
   ## api/novel.js
     GET    /novels?page&size&category&status&keyword     列表（服务端分页）
@@ -425,6 +445,13 @@
 ################################################################################
 
   ## 刚做完
+    · ★ 2026-10-27 首页（FeedView）接真接口（内容流）
+      · 新增 api/content.js / components/ContentCard.vue / utils/cover.js
+      · 全部 / 推荐 / 避雷 三个 tab 走后端 polarity；分页改成「加载更多」
+      · 加载中 / 报错 / 空 三态分开；卡片显示作者、AI 标（D2）、态度、档位、关联书
+      · 正文默认 3 行，真被裁切才出现「展开全文」（按高度判断，不按字数猜）
+      · ★ 右栏三个榜没有后端聚合接口，**已撤掉**（避雷榜 / 口碑推荐 / 热门雷点）
+      · 尚未接：AuthorView（/authors/{id}）、详情页书评区（/contents?novelId=）
     · ★ 书架页 / 排行榜页改成统一格式（2026-10-16）
       · 两页都接上了 SiteHeader（迁移进度：已接 7 / 待接 11），都用了新的配色变量
       · ★ 修掉一个**我自己在 10-15 埋的 bug**：书城页"人气榜"直接读了
@@ -492,8 +519,8 @@
     · ⬜ 仍在：ChapterReadView 章节列表加载失败是静默的
     · ⬜ 仍在：LoginView 的"手机号登录" tab 是纯占位，没有实现
     · ⬜ 仍在：全站零测试；前端也没有任何测试
-    · ⬜ 新记：发现 / 书单 / 作者 / 详情 里的新内容全是**假数据**，
-      页面底部已标明是演示数据 —— 后端缺口见 docs/设计/前端改版-设计方案.txt
+    · ⬜ 新记：书单 / 作者页 / 详情页书评区仍是**假数据**，页面底部已标明；
+      首页（发现）2026-10-27 已接真接口 —— 后端缺口见 docs/设计/前端改版-设计方案.txt
 
 
 ################################################################################

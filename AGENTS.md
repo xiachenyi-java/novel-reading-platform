@@ -8,7 +8,8 @@
 
 基于 Spring Boot + JPA + Redis + JWT 的小说平台，前后端分离。
 **学习项目**，目标是把 Java 后端知识点串成线，不是上线运营。
-规模：51 个 Java 类 / 3088 行 / 21 个 REST 接口 / 20 个 Vue 组件 / 4 张表。
+规模：65 个 Java 类 / 3632 行 / 24 个 REST 接口 / 20 个 Vue 组件 / 6 张表（实体口径）。
+★ `docker/mysql/init/01-schema.sql` 已补到 6 张表（2026-10-24，问题 50 已修）。
 ★ 方向（2026-10-23）：正从「小说发布 / 阅读」转向「**书评推荐**」——
   用户不产正文，图书评人（真人 + AI）的口味和态度。
 
@@ -27,21 +28,21 @@
   · `前端说明-给AI.txt` (521)      ★★ 做**前端**必读，**可整读** —— 唯一不受上面
                                      "300 行"规矩约束的文件（读它比翻下面那份省得多）
                                      ★ 已从 347 涨到 521（改版落地，内容在扩）
-  · `项目说明-给AI.txt` (612)      ★ 做**后端**必读 —— 稳定事实
-  · `项目说明-参考附录.txt` (353)   表结构 / 接口 / Redis Key / 目录 —— **查表才读**
+  · `项目说明-给AI.txt` (617)      ★ 做**后端**必读 —— 稳定事实
+  · `项目说明-参考附录.txt` (410)   表结构 / 接口 / Redis Key / 目录 —— **查表才读**
   · `AI操作细则.txt` (126)         文档同步 + 题库归档规则 —— **触发时才读**
   · `项目笔记/`                     "做到哪了" —— **推进时看**
-      `00-项目总览.txt` (568，【最新交接】在这)、`问题清单.txt` (1047，**只在改代码/排错时读**)
+      `00-项目总览.txt` (639，【最新交接】在这)、`问题清单.txt` (1184，**只在改代码/排错时读**)
   · `设计/`                         "打算怎么做" —— **动代码前看**
       `书架系统-设计方案.txt` (1132) —— 设计意图，按节读
       `前端改版-设计方案.txt` (~270) —— ★★ 顶部有【命名权威】【已定决策 D1-D3】
                                         **表名 / 接口名以它为准**
-      `书评人体系-设计方案.txt` (500) —— 2026-10-23 新建：6 张表 + 感情三层模型
+      `书评人体系-设计方案.txt` (513) —— 2026-10-23 新建：6 张表 + 感情三层模型
       `本期施工-内容流与AI书评人.txt` —— ★★ 2026-10-23 新建：**本期只做这一批**
                                         （2026-10-24 开工，约 3 天）
                                         内容流 + AI 生成 + 正版跳转 + 试读降级
                                         与上一份冲突时以本文件为准（D4~D7）
-      `产品改造-设计方案.txt` (1082) —— 总蓝图，⏸ 暂缓
+      `产品改造-设计方案.txt` (1087) —— 总蓝图，⏸ 暂缓
   · `实战笔记/`、`面试题库/`        —— 面试前看
   · `知识笔记/`、`Java学习路线`、`上线与运营路线` —— 他复习用，**默认不读**
 
@@ -87,7 +88,39 @@
 - **上线判据 A/B/C**：A 六大类到 70%+（**目前 4/6**，下一个是 04 限流防刷）；B/C 已达标。
   ★ 数字以 `项目笔记/XX-xxx.txt` 首行的【完成度】为准；汇总看 00-项目总览 第六节。
 
-## 当前状态（2026-10-23）
+## 当前状态（2026-10-27）
+
+- ★ **2026-10-27 内容流后端 Day 1 打通**（已实测）：
+    ✅ `IContentService` / `ContentServiceIml`：分页 + 极性/书/作者/关键词过滤
+       批量 `findAllById` 查 user/novel 防 N+1；`body → text` 映射；isAi 转 Boolean
+    ✅ `ContentController`：GET /contents（匿名）、DELETE /contents/{id}（@RequireAdmin）
+    ✅ `AuthorController`：GET /authors/{id}；`AuthorProfileVO` + `UserService.getAuthorProfile`
+    ✅ `LoginInterceptor` 游客放行 `/contents` `/authors`
+       ★ 修过一次 `&&`/`||` 优先级漏洞（曾导致匿名可调 DELETE）
+    ✅ 实测：GET /contents 匿名 code 200；GET /authors/1 code 200；
+       匿名 DELETE /contents/{id} → HTTP 401
+    🔲 未做：AI 生成接口（Day 2）、前端接真接口、种子数据（content 表仍 0 行）
+    🟠 **问题 55**：`@Transactional` 加在 `findPageContents`（只读）上，
+       `softDelete` 仍没有事务 —— 注解位置要挪
+    🟡 **问题 56**：非法 polarity 返回 `Page.empty()` 丢分页信息
+       （实测 `size=0`、`pageable="INSTANCE"`）
+
+- ★ **2026-10-24 书评数据底座已落地**（提交 a9eea2f + 未提交改动）：
+    ✅ 新增实体 `Content` / `ContentMark`
+       枚举 `Polarity`(REC/WARN/NOTE) / `Grade`(GOD/GOOD/OK/BAD) / `MarkKind`(GOOD/WARN)
+    ✅ `User` 加 bio / areas / isAi（列名 `is_ai`，Integer 0/1）
+       `Novel` 加 platform / sourceUrl
+    ✅ Repository：`ContentRepository`（JpaSpecificationExecutor）/
+       `ContentMarkRepository`（含 `findByContentIdIn` 批量查防 N+1）/
+       `ContentSpecifications`（软删 + 极性 + 书 + 作者 + 关键词）
+    🔲 未做：`IContentService` 还是空接口；ContentVO 已写但无 Service / Controller / 前端
+       （2026-10-27 已补 Service / Controller，前端仍未做）
+    ✅ **问题 50 已补 SQL**（2026-10-24）：`01-schema.sql` 加 content / content_mark、
+       user 三字段、novel 两字段；已导入本机临时库验证 6 张表 + 索引 + UTF-8
+       ⚠ 但 Docker 空卷 `down -v && up --build` **还没跑**（Desktop 未启动）
+    🟡 **问题 51**：dev 有意连本机 3306（本地开发方便），与 Docker 3307 口径并存
+       → 验证 schema 时要临时切回 3307
+    ✅ `grade`（GOD/GOOD/OK/BAD）已写回三份设计文档（2026-10-24）
 
 - ★ **2026-10-23 产品方向定案**（D1/D2/D3，已写进设计文档）：
     D1 = 章节**保留**，管理员独占，定位"平台自营试读"
@@ -123,9 +156,9 @@
     ④ addChapter：锁外事务内 + MAX+1 取号 + 唯一约束 catch 兜底
     ⑤ deleteChapter：两阶段 +1000000 / -1000001 重排
   ⚠ 新增未修问题 **32~43**（详见问题清单）
-- ★ **数据库口径已统一**（问题 26 已修）：dev 与 prod 都连 **Docker MySQL `localhost:3307`**。
-  ⚠ 本机原生 MySQL(3306) **已无人使用** —— 别再用它，否则又踩"环境漂移"。
-  ⇒ `docker compose down -v && up --build` 现在**真的能验证 schema.sql**（已实测通过）
+- ★ **数据库口径**：prod 连容器内 `mysql:3306`（compose 映射到宿主机 3307）；
+  dev **有意连本机 3306**（本地开发方便，见问题 51）。
+  ⚠ 要验证 `01-schema.sql` 时必须临时切 3307 + `down -v`，否则验的是本机库
 - 书架系统：**判据债已清完**（2026-10-16）—— 23/24/25 三组判据 + 越权 4 条 +
   游客回归 + docker 演练，**全部通过**
   ✅ 列表接口返回值已改 `Result<Page<BookshelfItemVO>>`（dc8f67a）
@@ -163,6 +196,17 @@
   删小说孤儿数据 ／ 异常泄露 ／ login 缺 @Valid ／ 事务范围 ／ columnNames ／ base-url
 - 🟠 **44~49** 2026-10-22 公网部署新发现：uploads 无卷（重建丢图）／
   3307·6379 映射宿主机 ／ 日志无卷 ／ Security 默认配置 ／ override 待合并（49 为 🟢 性能）
+- ✅ **50** `01-schema.sql` 已补（6 张表 + 新字段），临时库验证通过；
+  ⚠ Docker 空卷 `down -v && up --build` 未实测
+- 🟡 **51** dev 有意连本机 3306（本地开发方便），与 Docker 3307 口径并存
+- ✅ **52** 内容流骨架已打通（2026-10-27）—— Service / Controller / 作者接口都有
+- 🟠 **55** `@Transactional` 加在只读的 `findPageContents` 上，`softDelete` 仍无事务
+- 🟡 **56** 非法 polarity 返回 `Page.empty()` 丢分页信息（实测 size=0）
+- 🟢 **57** `softDelete` 不过滤 deleted，重复删除仍然“成功”
+- ✅ **53** Content 索引**实测正常**（2026-10-26 SHOW INDEX）——
+  原"索引建不出来"的判断是假阳性；Hibernate 6 会做逻辑名→列名映射
+- 🟠 **54** 枚举列类型两套：3306 是 `enum(...)`（update 建的），
+  `01-schema.sql` 是 `varchar(10)` → prod validate 未实测；需统一
 - 🟡 防击穿 `locks` Map 只增不减（无界增长）
 - 🟡 **30** 验证债：getCurrentUser 无调用点（问题 5 无法端到端验）
 - 🟢 **31** `Novel.setChapters()` 空方法（建议删）
